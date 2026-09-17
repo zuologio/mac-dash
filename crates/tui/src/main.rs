@@ -192,12 +192,19 @@ fn run(
 
         // Poll for input for the remainder of the frame, so a keypress is
         // handled promptly without spinning the CPU.
+        //
+        // `last_frame` is reset *after* the poll, not before. Resetting it
+        // first makes the next iteration's elapsed() include the time spent
+        // polling, so the budget computes to zero on every other frame and
+        // the loop busy-spins through poll(0) instead of sleeping.
         let budget = Duration::from_millis(FRAME_MS)
             .checked_sub(last_frame.elapsed())
             .unwrap_or_default();
+
+        let poll_result = event::poll(budget);
         last_frame = Instant::now();
 
-        match event::poll(budget) {
+        match poll_result {
             Ok(true) => match event::read() {
                 Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => match k.code {
                     KeyCode::Char('q') | KeyCode::Esc => break Ok(()),

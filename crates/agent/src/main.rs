@@ -233,6 +233,7 @@ fn main() {
 
     let interval = Duration::from_millis(args.interval_ms);
     let mut tick: u64 = 0;
+    let mut had_no_targets = true;
     let mut last_report = Instant::now();
     let mut sent_since_report: u64 = 0;
 
@@ -248,6 +249,16 @@ fn main() {
         }
 
         let addrs = targets.addrs();
+
+        // Say when the last display goes away, and when one comes back.
+        // Without this the agent falls silent exactly when something has gone
+        // wrong, which is the moment the log matters most.
+        if addrs.is_empty() != had_no_targets {
+            had_no_targets = addrs.is_empty();
+            if had_no_targets {
+                println!("macdash-agent: no displays (beacons stopped); waiting");
+            }
+        }
         let packet = collectors.sample(tick, addrs.first().copied());
         sent_since_report += sender.broadcast(&packet, &addrs) as u64;
 

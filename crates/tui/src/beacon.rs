@@ -27,7 +27,7 @@ pub fn spawn(stats_port: u16, name: Option<String>) {
         };
 
         let mut socket: Option<UdpSocket> = None;
-        let mut announced = false;
+        let mut state = BeaconState::default();
 
         loop {
             // Rebuild the socket on failure rather than exiting: at boot the
@@ -37,13 +37,24 @@ pub fn spawn(stats_port: u16, name: Option<String>) {
                 socket = open_socket();
             }
 
+            let ifaces = multicast_interfaces();
+
+            if state.should_rebuild(&ifaces) {
+                // The set of addresses changed — a new DHCP lease, WiFi
+                // reassociating, an interface going down. The existing socket
+                // may be bound to an address that no longer exists, and a
+                // multicast send on a stale interface usually reports success
+                // while the frames go nowhere. Rebuilding is the only way to
+                // be sure the beacon is really leaving the machine.
+                socket = open_socket();
+            }
+
             if let Some(sock) = &socket {
                 // Send once per interface rather than once overall. The
                 // kernel picks a single default egress interface for
                 // multicast, which on a host with more than one network is
                 // often the wrong one — and the failure is silent, so the
                 // beacon simply never reaches the Mac.
-                let ifaces = multicast_interfaces();
                 let mut sent = 0;
 
                 for iface in &ifaces {
@@ -56,23 +67,92 @@ pub fn spawn(stats_port: u16, name: Option<String>) {
                     }
                 }
 
-                // Fall back to the kernel's choice if enumeration found
-                // nothing (no interfaces up yet at boot).
-                if sent == 0 {
-                    let _ =
-                        socket2::SockRef::from(sock).set_multicast_if_v4(&Ipv4Addr::UNSPECIFIED);
-                    if sock.send_to(&payload, group).is_err() {
-                        socket = None;
-                    }
-                } else if !announced {
-                    println!("macdash: announcing on {sent} interface(s)");
-                    announced = true;
+                // Always also send via the kernel's default egress. On a host
+                // where per-interface selection fails silently this is the
+                // path that actually works, and one extra 30-byte datagram
+                // every 3 s is not worth optimising away.
+                let s2 = socket2::SockRef::from(sock);
+                if s2.set_multicast_if_v4(&Ipv4Addr::UNSPECIFIED).is_ok()
+                    && sock.send_to(&payload, group).is_ok()
+                {
+                    sent += 1;
                 }
+
+                if sent == 0 {
+                    // Nothing left this machine. Drop the socket so the next
+                    // cycle builds a fresh one.
+                    socket = None;
+                }
+
+                state.report(sent, &ifaces);
+            } else {
+                state.report(0, &ifaces);
             }
 
             std::thread::sleep(Duration::from_millis(BEACON_INTERVAL_MS));
         }
     });
+}
+
+/// Tracks beacon health so that silence is visible instead of mysterious.
+///
+/// The original loop logged once on startup and then never again, so a
+/// display that stopped being discovered gave no signal at all on the Pi —
+/// the dashboard simply went `ASLEEP` and the journal stayed empty. This
+/// records what changed and says so.
+#[derive(Default)]
+struct BeaconState {
+    last_ifaces: Vec<Ipv4Addr>,
+    announced: bool,
+    consecutive_failures: u32,
+}
+
+impl BeaconState {
+    /// Whether the socket should be rebuilt before the next send.
+    ///
+    /// Takes the current interface list and compares it to the last one: any
+    /// change means the socket may be bound to an address that has gone away.
+    fn should_rebuild(&self, current: &[Ipv4Addr]) -> bool {
+        !self.last_ifaces.is_empty() && self.last_ifaces != current
+    }
+
+    fn report(&mut self, sent: usize, ifaces: &[Ipv4Addr]) {
+        let changed = !self.last_ifaces.is_empty() && self.last_ifaces != ifaces;
+        if changed {
+            println!(
+                "macdash: network changed ({:?} -> {:?}), re-announcing",
+                self.last_ifaces, ifaces
+            );
+            self.announced = false;
+        }
+        self.last_ifaces = ifaces.to_vec();
+
+        if sent == 0 {
+            self.consecutive_failures += 1;
+            // Log the first failure, then back off to roughly once a minute
+            // so a Pi with no network does not fill its SD card with journal.
+            if self.consecutive_failures == 1 || self.consecutive_failures % 20 == 0 {
+                eprintln!(
+                    "macdash: beacon not sent ({} consecutive); \
+                     no network, or multicast is blocked",
+                    self.consecutive_failures
+                );
+            }
+            self.announced = false;
+        } else {
+            if self.consecutive_failures > 0 {
+                println!(
+                    "macdash: beacon recovered after {} failed attempts",
+                    self.consecutive_failures
+                );
+                self.consecutive_failures = 0;
+            }
+            if !self.announced {
+                println!("macdash: announcing on {sent} path(s): {ifaces:?}");
+                self.announced = true;
+            }
+        }
+    }
 }
 
 fn open_socket() -> Option<UdpSocket> {
@@ -117,4 +197,85 @@ fn multicast_interfaces() -> Vec<Ipv4Addr> {
         libc::freeifaddrs(ifap);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ip(s: &str) -> Ipv4Addr {
+        s.parse().unwrap()
+    }
+
+    /// At startup there is no previous list, so nothing to rebuild for.
+    #[test]
+    fn no_rebuild_before_the_first_send() {
+        let s = BeaconState::default();
+        assert!(!s.should_rebuild(&[ip("192.168.0.148")]));
+    }
+
+    #[test]
+    fn no_rebuild_while_the_network_is_stable() {
+        let mut s = BeaconState::default();
+        let ifaces = vec![ip("192.168.0.148")];
+        s.report(1, &ifaces);
+        assert!(!s.should_rebuild(&ifaces));
+    }
+
+    /// The bug: a new DHCP lease left the socket bound to an address that no
+    /// longer existed, and multicast sends kept reporting success while the
+    /// frames went nowhere. The display stayed silent until it was restarted.
+    #[test]
+    fn rebuilds_when_the_address_changes() {
+        let mut s = BeaconState::default();
+        s.report(1, &[ip("192.168.0.148")]);
+        assert!(
+            s.should_rebuild(&[ip("192.168.0.201")]),
+            "a new DHCP lease must force a fresh socket"
+        );
+    }
+
+    #[test]
+    fn rebuilds_when_an_interface_disappears() {
+        let mut s = BeaconState::default();
+        s.report(2, &[ip("192.168.0.148"), ip("10.0.0.5")]);
+        assert!(s.should_rebuild(&[ip("192.168.0.148")]));
+    }
+
+    #[test]
+    fn rebuilds_when_an_interface_appears() {
+        let mut s = BeaconState::default();
+        s.report(1, &[ip("192.168.0.148")]);
+        assert!(s.should_rebuild(&[ip("192.168.0.148"), ip("10.0.0.5")]));
+    }
+
+    /// Losing the network entirely must not wedge the state: once it comes
+    /// back, the next send has to be treated as a fresh announcement.
+    #[test]
+    fn recovers_after_total_network_loss() {
+        let mut s = BeaconState::default();
+        s.report(1, &[ip("192.168.0.148")]);
+        assert!(s.announced);
+
+        for _ in 0..5 {
+            s.report(0, &[]);
+        }
+        assert_eq!(s.consecutive_failures, 5);
+        assert!(!s.announced, "must re-announce once the network returns");
+
+        s.report(1, &[ip("192.168.0.201")]);
+        assert_eq!(s.consecutive_failures, 0, "failure count must reset");
+        assert!(s.announced);
+    }
+
+    #[test]
+    fn failure_count_accumulates_then_clears() {
+        let mut s = BeaconState::default();
+        for i in 1..=3 {
+            s.report(0, &[]);
+            assert_eq!(s.consecutive_failures, i);
+        }
+        s.report(1, &[ip("192.168.0.148")]);
+        assert_eq!(s.consecutive_failures, 0);
+    }
 }
