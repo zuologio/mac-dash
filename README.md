@@ -131,6 +131,31 @@ cargo run --release -p macdash-agent      # on the Mac
 cargo run --release -p macdash-tui        # anywhere on the same LAN
 ```
 
+## Watching over SSH
+
+The dashboard is just a terminal program, so it runs in an SSH session as
+easily as on the panel:
+
+```bash
+ssh pi@192.168.0.148
+macdash-tui --port 0        # --port 0 if the service is already running
+```
+
+`--port 0` matters once you have installed the service: it already holds 9999,
+and the OS picks a free port instead. The agent streams to **every** display it
+discovers, so your SSH view and the panel both show live data at the same time
+— which also makes this the easy way to check the system before the screen
+arrives.
+
+Press `q` to quit; the service keeps running.
+
+To check it works without a terminal at all — over a pipe, or from a script —
+render a single frame as plain text:
+
+```bash
+cargo run -p macdash-tui --example snapshot
+```
+
 ## When the Mac sleeps
 
 The dashboard already knows how long it has been since the last packet — that

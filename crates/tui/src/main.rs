@@ -74,7 +74,9 @@ USAGE:
     macdash-tui [OPTIONS]
 
 OPTIONS:
-    --port <n>          Listen port (default: {DEFAULT_STATS_PORT})
+    --port <n>          Listen port (default: {DEFAULT_STATS_PORT}); 0 picks any free
+                        port, for running a second display alongside one
+                        that is already installed
     --name <label>      Identify this display in the agent's logs
     --backlight <path>  Panel to darken when the Mac sleeps, e.g.
                         /sys/class/backlight/rpi_backlight
@@ -106,6 +108,23 @@ fn main() {
 
     let (rx, port) = match receiver::spawn(args.port) {
         Ok(v) => v,
+        Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
+            // Almost always the installed service already holding the port.
+            eprintln!(
+                "macdash-tui: port {} is already in use.\n\
+                 \n\
+                 A macdash display is probably already running (the systemd\n\
+                 service, if you installed it). To run a second one alongside\n\
+                 it, let the OS pick a free port:\n\
+                 \n\
+                 \x20   macdash-tui --port 0\n\
+                 \n\
+                 The agent streams to every display it discovers, so both\n\
+                 will show live data.",
+                args.port
+            );
+            std::process::exit(1);
+        }
         Err(e) => {
             eprintln!("macdash-tui: cannot listen on port {}: {e}", args.port);
             std::process::exit(1);
@@ -119,7 +138,23 @@ fn main() {
     let mut backlight = MaybeBacklight::new(args.backlight.as_deref());
 
     if let Err(e) = run(rx, &mut backlight) {
-        eprintln!("macdash-tui: {e}");
+        // ENXIO/ENOTTY here means stdout is not a terminal — the common case
+        // being a pipe or a cron job. The raw errno ("Device not configured")
+        // explains nothing, so name the actual problem and the way out.
+        if matches!(e.raw_os_error(), Some(libc::ENXIO) | Some(libc::ENOTTY))
+            || e.kind() == io::ErrorKind::Unsupported
+        {
+            eprintln!(
+                "macdash-tui: this needs a terminal, and stdout is not one.\n\
+                 \n\
+                 If you are piping or redirecting output, use the snapshot\n\
+                 example instead — it renders one frame as plain text:\n\
+                 \n\
+                 \x20   cargo run -p macdash-tui --example snapshot"
+            );
+        } else {
+            eprintln!("macdash-tui: {e}");
+        }
         std::process::exit(1);
     }
 }
