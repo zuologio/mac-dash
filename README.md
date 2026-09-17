@@ -249,6 +249,21 @@ datagram, no fragmentation" guarantee is enforced rather than documented.
 they lost, the counter-delta edge cases, and the reasoning behind each
 constant.
 
+## If the screen is blank
+
+The dashboard and a login prompt cannot both own tty1, so the installer masks
+`getty@tty1` — but only *after* confirming macdash started. If that ordering is
+broken (or an install fails midway), tty1 ends up with nothing attached: no
+dashboard, no prompt, just the boot log and then silence. The Pi is still fine
+over SSH; only the attached screen is dead.
+
+```bash
+./deploy/fix-pi-console.sh g10@192.168.0.148
+```
+
+That gives the console back to a login prompt, tries macdash again, and hands
+tty1 over only if the service actually comes up.
+
 ## Gotchas found the hard way
 
 **macOS multicast needs a per-interface join.** Joining via `INADDR_ANY` binds
@@ -264,6 +279,12 @@ tunnel — otherwise it reports the tunnel's near-zero counters on a busy machin
 counters barely moved. Any gap over 2 seconds is discarded and the baseline
 reseeded, which is why you do not get a garbage spike on the graph at exactly
 the moment you walk back to your desk.
+
+**Never mask getty before the replacement works.** Masking `getty@tty1` and
+starting the dashboard look like one step, but if the second half fails the
+console has no owner at all — and the symptom (a blank screen) gives no hint
+that a login prompt was disabled. Confirm the new owner is running, then take
+the console away.
 
 **Mach ticks are not nanoseconds.** On Apple Silicon the timebase is 125/3.
 Treating raw ticks as nanoseconds overstates every process's CPU by ~41×.

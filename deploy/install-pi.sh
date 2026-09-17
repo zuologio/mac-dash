@@ -68,6 +68,15 @@ systemctl stop macdash 2>/dev/null || true
 install -m 755 /tmp/macdash-tui /usr/local/bin/macdash-tui
 rm -f /tmp/macdash-tui
 
+# The dashboard and a login prompt cannot both own tty1. Raspberry Pi OS
+# ships getty@tty1 with an autologin drop-in, and leaving it running means
+# the two fight over the console. Masking it is correct — but ONLY once the
+# dashboard is actually installed and working, or tty1 ends up with nothing
+# attached at all: a blank screen, no prompt, and no way in except SSH.
+#
+# So: unmask it now, and mask it again only after the service starts cleanly.
+systemctl unmask getty@tty1.service 2>/dev/null || true
+
 cat > /etc/systemd/system/macdash.service <<'UNIT'
 [Unit]
 Description=macdash display
@@ -79,8 +88,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Let any straggling boot output finish, then take the console cleanly.
-ExecStartPre=/bin/sh -c 'sleep 2; clear >/dev/tty1 2>/dev/null || true'
+# Blank the console before drawing, so late boot output does not sit under
+# the UI. The TUI also repaints fully every few seconds as a backstop.
+ExecStartPre=/bin/sh -c 'clear >/dev/tty1 2>/dev/null || true'
 ExecStart=/usr/local/bin/macdash-tui ${ARGS}
 Restart=always
 RestartSec=2
@@ -101,7 +111,25 @@ UNIT
 systemctl daemon-reload
 systemctl enable macdash
 systemctl restart macdash
-sleep 1
+
+# Verify it actually came up before taking the console away from getty.
+sleep 3
+if systemctl is-active --quiet macdash; then
+    # The dashboard owns tty1 now, so the login prompt must not also try.
+    systemctl stop getty@tty1.service 2>/dev/null || true
+    systemctl mask getty@tty1.service 2>/dev/null || true
+    echo "macdash is running; tty1 handed over to the dashboard."
+else
+    # Leave getty enabled so the screen still shows a usable login rather
+    # than nothing at all, and say what went wrong.
+    systemctl unmask getty@tty1.service 2>/dev/null || true
+    systemctl start getty@tty1.service 2>/dev/null || true
+    echo "macdash FAILED to start — tty1 left with a login prompt." >&2
+    systemctl --no-pager --lines=20 status macdash >&2 || true
+    journalctl -u macdash -n 20 --no-pager >&2 || true
+    exit 1
+fi
+
 systemctl --no-pager --lines=10 status macdash || true
 REMOTE
 
