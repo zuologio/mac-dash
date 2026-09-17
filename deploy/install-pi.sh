@@ -35,11 +35,20 @@ ARGS="--name $(hostname -s 2>/dev/null || echo display)"
 
 echo "Installing to ${HOST}"
 
-# Staged in /tmp because the service binary is in use while running, and a
-# direct scp over it would fail with ETXTBSY on an upgrade.
-scp "$BIN" "${HOST}:/tmp/macdash-tui"
+# The remote half is generated here, copied over, and then run as a file.
+#
+# The obvious `ssh host "sudo bash -s" <<EOF` does not work: piping the script
+# into bash's stdin leaves sudo with no free stdin to read a password from and
+# no TTY to prompt on, so it fails with "a terminal is required". Sending a
+# file instead keeps stdin available, and -t gives sudo a terminal.
+# Both files are staged in one directory under fixed names so a single scp
+# can carry them: each extra scp is another password prompt when key auth is
+# not set up.
+STAGE="$(mktemp -d -t macdash)"
+trap 'rm -rf "$STAGE"' EXIT
+cp "$BIN" "$STAGE/macdash-tui"
 
-ssh "$HOST" "sudo bash -s" <<REMOTE
+cat > "$STAGE/macdash-install.sh" <<REMOTE
 set -euo pipefail
 
 systemctl stop macdash 2>/dev/null || true
@@ -77,7 +86,18 @@ sleep 1
 systemctl --no-pager --lines=10 status macdash || true
 REMOTE
 
+echo "Copying files…"
+scp -q "$STAGE/macdash-tui" "$STAGE/macdash-install.sh" "${HOST}:/tmp/"
+
+echo "Installing…"
+# -t allocates a TTY so sudo can prompt for its password; the script runs from
+# a file rather than stdin so that sudo's stdin stays free to read it.
+ssh -t "$HOST" "sudo bash /tmp/macdash-install.sh; rm -f /tmp/macdash-install.sh"
+
 echo
 echo "Installed. The dashboard is on tty1 and starts at boot."
+echo
 echo "  logs:    ssh ${HOST} 'journalctl -u macdash -f'"
 echo "  restart: ssh ${HOST} 'sudo systemctl restart macdash'"
+echo
+echo "To skip the password prompts next time: ssh-copy-id ${HOST}"
