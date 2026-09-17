@@ -1,0 +1,18 @@
+[package]
+name = "macdash-agent"
+description = "Collects macOS system metrics and streams them to macdash displays"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "macdash-agent"
+path = "src/main.rs"
+
+[dependencies]
+macdash-proto = { path = "../proto" }
+serde.workspace = true
+serde_json.workspace = true
+libc = "0.2"
+socket2 = { version = "0.5", features = ["all"] }
+core-foundation = "0.10"
