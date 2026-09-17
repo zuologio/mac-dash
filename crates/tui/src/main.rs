@@ -9,6 +9,7 @@
 mod beacon;
 mod brightness;
 mod receiver;
+mod repaint;
 mod state;
 mod ui;
 
@@ -184,7 +185,7 @@ fn run(
     let mut terminal = setup_terminal()?;
     let mut dash = Dashboard::new();
     let mut last_frame = Instant::now();
-    let mut last_repaint = Instant::now();
+    let mut repainter = repaint::Repainter::new();
 
     let result = loop {
         // Drain every pending packet, keeping only the newest. If a redraw
@@ -205,14 +206,11 @@ fn run(
             backlight.set(p.wants_backlight());
         }
 
-        // Periodically force a full repaint. ratatui normally redraws only
-        // the cells that changed, so anything else that writes to this
-        // console — a late boot message, a kernel warning — stays on screen
-        // indefinitely over the parts of the UI that happen to be static.
-        if last_repaint.elapsed() >= Duration::from_secs(5) {
-            let _ = terminal.clear();
-            last_repaint = Instant::now();
-        }
+        // Periodically rewrite every cell, so anything else that writes to
+        // this console — a late boot message, a kernel warning — is painted
+        // over rather than left sitting on the static parts of the UI.
+        // This deliberately does not clear the screen first; see repaint.rs.
+        repainter.maybe_invalidate(&mut terminal);
 
         if let Err(e) = terminal.draw(|f| ui::render(f, &dash, now)) {
             break Err(e);
