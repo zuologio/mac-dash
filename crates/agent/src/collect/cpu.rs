@@ -86,11 +86,7 @@ fn read_ticks() -> Option<Vec<CpuTicks>> {
 
     // Owns the kernel allocation from here; released on scope exit even if
     // the slice read below were to panic.
-    let guard = ProcessorInfoBuf {
-        ptr: info,
-        count,
-        info_count,
-    };
+    let guard = ProcessorInfoBuf { ptr: info, info_count };
 
     let slice =
         unsafe { std::slice::from_raw_parts(guard.ptr as *const u32, guard.info_count as usize) };

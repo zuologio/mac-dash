@@ -1,7 +1,7 @@
 # macdash — Design & Analysis
 
 **Date:** 2026-09-17
-**Status:** Approved, implementing
+**Status:** Implemented and verified
 
 Stream live system metrics from a Mac to a Raspberry Pi Zero W over the LAN,
 rendered as a terminal dashboard on a small always-on screen.
@@ -180,33 +180,74 @@ switching to CBOR later is a one-file change.
 
 ## 4. Meeting the CPU budget
 
-This constraint shapes the agent's structure, so it gets its own section.
+> **Revised after measurement.** The predictions in this section were wrong,
+> and the error is instructive enough to keep visible rather than quietly
+> correct. The original text is preserved below the measured results.
 
-CPU, memory, network and thermal are a handful of Mach and sysctl calls —
-roughly 200 µs per sample. At 5 Hz that is about 0.1% of one core.
+### What was predicted
 
-**Top processes is a different animal.** `proc_listpids` followed by a
-`proc_pidinfo` and `proc_name` per PID is 1000+ syscalls on a typical Mac —
-around 4 ms. At 5 Hz that would be 20 ms/s of pure syscall overhead, and it is
-the only thing here that could plausibly register in Activity Monitor.
+Process enumeration would dominate: `proc_listpids` plus a `proc_pidinfo` per
+PID is 1000+ syscalls, so it was budgeted at ~4 ms and moved to a 1 Hz clock,
+with everything else — including temperature — assumed to cost ~200 µs
+together.
 
-**So the agent runs two clocks:**
+### What was measured
 
-| Group | Rate | Cost/sample | Cost/s |
-|---|---|---|---|
-| cpu, mem, net, temp | 5 Hz | ~200 µs | ~1 ms |
-| processes | 1 Hz | ~4 ms | ~4 ms |
+Profiling the real loop (`cargo run -p macdash-agent --example bench`) on an
+M5:
 
-The process table is cached and included in **every** packet, refreshed on
-every 5th tick. The duplicated bytes are free at this bitrate, and the Pi's
-receive path stays a straight deserialize with no "did this packet include
-processes?" branch. A top-5 list refreshing at 1 Hz is visually
-indistinguishable from one refreshing at 5 Hz, and the split removes 80% of
-the agent's dominant cost.
+```
+temp     44660 µs   <- 99.6% of the total
+procs      959 µs
+net         43 µs
+cpu         12 µs
+mem          2 µs
+```
 
-**Total: ~5 ms of CPU per second, under 0.5% of one core.**
+**Temperature was the entire cost, at 1000x everything else combined.** A Mac
+exposes 45 thermal sensors, and each `IOHIDServiceClientCopyEvent` is a
+blocking IPC round trip of roughly 500 µs. Reading all 45 at 5 Hz cost 44 ms
+per sample: 22% of a core.
 
----
+Process enumeration — the predicted problem — was never significant. The 1 Hz
+split is still worth keeping, but it was solving the smaller issue.
+
+### What fixed it
+
+Two changes, both following from the same observation: the dashboard displays
+*one* SoC temperature.
+
+1. **Poll 5 sensors, not 45.** Reading 23 die sensors to take their maximum
+   spends 22 blocking round trips on resolution nobody can see. Adjacent die
+   sensors on one package track within a degree or two, so a small fixed
+   subset finds the hot spot just as well. Selection happens once at startup
+   and is stable, so the reported figure does not jump as sensors enter and
+   leave the set.
+
+2. **Read every 2 s, not every 200 ms.** Temperature is a thermal mass. A die
+   under sudden full load takes seconds to climb and the heatsink tens of
+   seconds, so a 2-second-old reading is indistinguishable on screen from a
+   fresh one. Every packet still carries a temperature.
+
+### Final duty cycle
+
+| Group | Rate | Cost/sample |
+|---|---|---|
+| cpu, mem, net, uptime | 5 Hz | ~60 µs |
+| processes | 1 Hz | ~750 µs |
+| temperature (hardware) | 0.5 Hz | ~2200 µs |
+
+**Measured: 0.012% of one core** — 7.4 ms of CPU per minute of wall clock, via
+`proc_pid_rusage`. Note that `ps` reports this as 0.5%: it accounts in 10 ms
+ticks and rounds a few milliseconds up to a whole one. Any measurement of a
+process this cheap needs nanosecond accounting to mean anything.
+
+### The lesson
+
+The expensive metric was the one nobody thought to measure. Predicting cost
+from syscall *counts* was the error — one blocking IPC round trip outweighed a
+thousand cheap syscalls. Profiling the whole loop, rather than reasoning about
+its parts, was the only thing that surfaced it.
 
 ## 5. Correctness details
 
@@ -402,6 +443,8 @@ system.
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Thermal private API changes in a macOS release | Medium | Quarantined behind `Result`; `temp: null` degrades gracefully; `--list-sensors` makes diagnosis immediate |
-| ARMv6 cross-compilation friction | Medium | Proven early rather than at the end; musl static linking avoids glibc version skew entirely |
 | AP blocks multicast between clients | Low | Client isolation would break discovery; `--target <ip>` escape hatch bypasses the beacon |
-| Process CPU timebase units differ from assumption | Medium | Converted via `mach_timebase_info` and verified empirically against `top` |
+| **macOS multicast join binds one interface** | **Hit during implementation** | Joining via `INADDR_ANY` alone silently receives nothing when a VPN holds the default route — the socket binds and the join succeeds, so the failure is invisible. Both sides now join and send per-interface. |
+| **VPN captures the default route** | **Hit during implementation** | The route lookup preferred a `utun` tunnel over the physical LAN, reporting near-zero traffic on a busy machine. Physical interfaces are now preferred. |
+| Process CPU timebase units differ from assumption | Medium | Converted via `mach_timebase_info` and verified empirically against `top`. Confirmed: the M5 timebase is 125/3, so raw ticks would have overstated CPU by ~41x |
+| ARMv6 cross-compilation friction | Resolved | Verified: `readelf -A` reports `Tag_CPU_arch: v6` with zero ARMv7-only instructions, statically linked, 695 KB |

@@ -1,6 +1,6 @@
 //! The individual panels.
 
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Sparkline, Table};
@@ -384,12 +384,3 @@ pub fn proc_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     );
 }
 
-/// Centred single-line message, used for empty states.
-#[allow(dead_code)]
-pub fn centered_message(f: &mut Frame, area: Rect, msg: &str) {
-    f.render_widget(
-        Paragraph::new(Span::styled(msg, Style::default().fg(theme::DIM)))
-            .alignment(Alignment::Center),
-        area,
-    );
-}

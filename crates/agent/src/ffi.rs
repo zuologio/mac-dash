@@ -76,7 +76,6 @@ pub struct mach_timebase_info_data_t {
 // --- libproc: process enumeration ----------------------------------------
 pub const PROC_ALL_PIDS: u32 = 1;
 pub const PROC_PIDTASKINFO: c_int = 4;
-pub const MAXCOMLEN: usize = 16;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
@@ -150,7 +149,6 @@ extern "C" {
 /// release is tied to scope exit rather than to remembering a call.
 pub struct ProcessorInfoBuf {
     pub ptr: *mut integer_t,
-    pub count: natural_t,
     pub info_count: natural_t,
 }
 

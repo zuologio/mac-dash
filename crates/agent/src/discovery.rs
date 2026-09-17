@@ -79,6 +79,7 @@ impl TargetTable {
     }
 
     /// A table that only ever holds explicitly configured targets.
+    #[cfg(test)]
     pub fn static_only() -> Self {
         Self {
             targets: HashMap::new(),
@@ -130,6 +131,7 @@ impl TargetTable {
         self.targets.keys().copied().collect()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.targets.is_empty()
     }

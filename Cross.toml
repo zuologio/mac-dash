@@ -1,0 +1,5 @@
+# ARMv6 (Pi Zero W v1) needs a container: rustup's prebuilt std for this
+# target is built for ARMv7 and produces binaries that fault with SIGILL on
+# an ARM1176 core.
+[target.arm-unknown-linux-musleabihf]
+image = "ghcr.io/cross-rs/arm-unknown-linux-musleabihf:main"

@@ -131,7 +131,7 @@ pub struct TempCollector {
     /// transient, so retrying 5 times a second would only waste cycles.
     disabled: bool,
     cached: Option<Temp>,
-    pub last_read_ms: u64,
+    last_read_ms: u64,
 }
 
 struct SensorClient {

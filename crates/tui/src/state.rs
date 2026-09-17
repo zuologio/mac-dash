@@ -106,6 +106,7 @@ impl Ring {
         self.items.iter().skip(skip).copied().collect()
     }
 
+    #[allow(dead_code)] // used by the snapshot example
     pub fn max(&self) -> u64 {
         self.items.iter().copied().max().unwrap_or(0)
     }

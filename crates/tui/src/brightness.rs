@@ -60,6 +60,7 @@ impl Backlight {
         }
     }
 
+    #[cfg(test)]
     pub fn is_on(&self) -> bool {
         self.is_on
     }
@@ -93,6 +94,7 @@ impl MaybeBacklight {
         }
     }
 
+    #[cfg(test)]
     pub fn enabled(&self) -> bool {
         self.0.is_some()
     }
