@@ -8,21 +8,33 @@ cd "$(dirname "$0")/.."
 
 HOST="${1:-}"
 if [[ -z "$HOST" ]]; then
-    echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--zero2]"
+    echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>] [--zero2]"
     echo "   e.g. $0 pi@192.168.0.148"
     exit 1
 fi
 shift
 
 BACKLIGHT=""
+MAC_ADDR=""
 TARGET="arm-unknown-linux-musleabihf"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --backlight) BACKLIGHT="$2"; shift 2 ;;
+        --mac)       MAC_ADDR="$2"; shift 2 ;;
         --zero2)     TARGET="armv7-unknown-linux-musleabihf"; shift ;;
         *) echo "unknown option: $1"; exit 1 ;;
     esac
 done
+
+# Many consumer access points drop multicast between wireless and wired
+# clients, which makes beacon discovery impossible on an otherwise healthy
+# network. Default to announcing directly to this Mac; multicast still runs
+# alongside it, so a second Mac is still discovered automatically.
+if [[ -z "$MAC_ADDR" ]]; then
+    MAC_ADDR="$(ipconfig getifaddr en0 2>/dev/null \
+                || ipconfig getifaddr en1 2>/dev/null || true)"
+    [[ -n "$MAC_ADDR" ]] && echo "Announcing directly to this Mac at ${MAC_ADDR}"
+fi
 
 BIN="target/${TARGET}/release/macdash-tui"
 if [[ ! -f "$BIN" ]]; then
@@ -32,6 +44,7 @@ fi
 
 ARGS="--name $(hostname -s 2>/dev/null || echo display)"
 [[ -n "$BACKLIGHT" ]] && ARGS="$ARGS --backlight $BACKLIGHT"
+[[ -n "$MAC_ADDR" ]] && ARGS="$ARGS --mac $MAC_ADDR"
 
 echo "Installing to ${HOST}"
 
@@ -58,10 +71,16 @@ rm -f /tmp/macdash-tui
 cat > /etc/systemd/system/macdash.service <<'UNIT'
 [Unit]
 Description=macdash display
-After=network.target
+# Start only once boot has settled. Starting at network.target puts the
+# dashboard on tty1 while cloud-init and the rest of the boot sequence are
+# still writing to that same console, so their output scrawls over the UI.
+After=network-online.target cloud-init.target systemd-user-sessions.service
+Wants=network-online.target
 
 [Service]
 Type=simple
+# Let any straggling boot output finish, then take the console cleanly.
+ExecStartPre=/bin/sh -c 'sleep 2; clear >/dev/tty1 2>/dev/null || true'
 ExecStart=/usr/local/bin/macdash-tui ${ARGS}
 Restart=always
 RestartSec=2
@@ -92,7 +111,16 @@ scp -q "$STAGE/macdash-tui" "$STAGE/macdash-install.sh" "${HOST}:/tmp/"
 echo "Installing…"
 # -t allocates a TTY so sudo can prompt for its password; the script runs from
 # a file rather than stdin so that sudo's stdin stays free to read it.
-ssh -t "$HOST" "sudo bash /tmp/macdash-install.sh; rm -f /tmp/macdash-install.sh"
+#
+# The remote exit status is checked explicitly: without this the script
+# announced success even when sudo had failed and nothing was installed.
+if ! ssh -t "$HOST" "sudo bash /tmp/macdash-install.sh && rm -f /tmp/macdash-install.sh"; then
+    echo
+    echo "Install failed on the Pi." >&2
+    echo "If sudo could not read a password, run this from an interactive" >&2
+    echo "terminal — the prompt needs a TTY." >&2
+    exit 1
+fi
 
 echo
 echo "Installed. The dashboard is on tty1 and starts at boot."

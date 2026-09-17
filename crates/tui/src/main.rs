@@ -13,6 +13,7 @@ mod state;
 mod ui;
 
 use std::io;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -37,6 +38,9 @@ struct Args {
     name: Option<String>,
     backlight: Option<String>,
     no_beacon: bool,
+    /// Macs to announce to directly, for networks where the access point
+    /// drops multicast between wireless and wired clients.
+    macs: Vec<SocketAddr>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -45,6 +49,7 @@ fn parse_args() -> Result<Args, String> {
         name: None,
         backlight: None,
         no_beacon: false,
+        macs: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -56,6 +61,15 @@ fn parse_args() -> Result<Args, String> {
             "--name" => args.name = Some(it.next().ok_or("--name needs a value")?),
             "--backlight" => args.backlight = Some(it.next().ok_or("--backlight needs a path")?),
             "--no-beacon" => args.no_beacon = true,
+            "--mac" => {
+                let v = it.next().ok_or("--mac needs an address")?;
+                let with_port = if v.contains(':') {
+                    v.clone()
+                } else {
+                    format!("{v}:{}", macdash_proto::BEACON_PORT)
+                };
+                args.macs.push(with_port.parse().map_err(|_| format!("bad address: {v}"))?);
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -80,6 +94,10 @@ OPTIONS:
     --name <label>      Identify this display in the agent's logs
     --backlight <path>  Panel to darken when the Mac sleeps, e.g.
                         /sys/class/backlight/rpi_backlight
+    --mac <ip>          Announce directly to this Mac as well as by
+                        multicast. Use when the dashboard never leaves
+                        WAITING: many access points drop multicast
+                        between wireless and wired clients.
     --no-beacon         Do not announce; only useful when the agent was
                         started with a matching --target
     -h, --help          Show this help
@@ -132,7 +150,7 @@ fn main() {
     };
 
     if !args.no_beacon {
-        beacon::spawn(port, args.name.clone());
+        beacon::spawn(port, args.name.clone(), args.macs.clone());
     }
 
     let mut backlight = MaybeBacklight::new(args.backlight.as_deref());
@@ -166,6 +184,7 @@ fn run(
     let mut terminal = setup_terminal()?;
     let mut dash = Dashboard::new();
     let mut last_frame = Instant::now();
+    let mut last_repaint = Instant::now();
 
     let result = loop {
         // Drain every pending packet, keeping only the newest. If a redraw
@@ -184,6 +203,15 @@ fn run(
         // Backlight follows presence, on transitions only (ANALYSIS.md §6).
         if let Some(p) = dash.presence.poll_transition(now) {
             backlight.set(p.wants_backlight());
+        }
+
+        // Periodically force a full repaint. ratatui normally redraws only
+        // the cells that changed, so anything else that writes to this
+        // console — a late boot message, a kernel warning — stays on screen
+        // indefinitely over the parts of the UI that happen to be static.
+        if last_repaint.elapsed() >= Duration::from_secs(5) {
+            let _ = terminal.clear();
+            last_repaint = Instant::now();
         }
 
         if let Err(e) = terminal.draw(|f| ui::render(f, &dash, now)) {

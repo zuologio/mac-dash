@@ -31,7 +31,7 @@ fn now_ms() -> u64 {
 fn main() {
     let (w, h) = (128u16, 37u16);
     let (rx, port) = receiver::spawn(0).expect("bind");
-    beacon::spawn(port, Some("snapshot".into()));
+    beacon::spawn(port, Some("snapshot".into()), Vec::new());
 
     eprintln!("listening on :{port}, collecting for 4s…");
 

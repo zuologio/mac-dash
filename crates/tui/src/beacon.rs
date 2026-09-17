@@ -6,7 +6,7 @@
 //! change, a Pi reboot, a Mac restart, or an AP dropping a frame all resolve
 //! themselves on the next beacon.
 
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -14,7 +14,14 @@ use socket2::{Domain, Protocol, Socket, Type};
 use macdash_proto::{Beacon, BEACON_GROUP, BEACON_INTERVAL_MS};
 
 /// Announce this display until the process exits.
-pub fn spawn(stats_port: u16, name: Option<String>) {
+/// Announce this display until the process exits.
+///
+/// `unicast_to` are addresses the beacon is additionally sent to directly.
+/// Many consumer access points drop multicast between wireless and wired
+/// clients — the frames leave the Pi and are silently discarded by the AP —
+/// which makes discovery impossible on an otherwise healthy network. Naming
+/// the Mac explicitly bypasses the group entirely.
+pub fn spawn(stats_port: u16, name: Option<String>, unicast_to: Vec<SocketAddr>) {
     std::thread::spawn(move || {
         let group = SocketAddrV4::new(Ipv4Addr::from(BEACON_GROUP), macdash_proto::BEACON_PORT);
         let beacon = Beacon::new(stats_port, name);
@@ -76,6 +83,14 @@ pub fn spawn(stats_port: u16, name: Option<String>) {
                     && sock.send_to(&payload, group).is_ok()
                 {
                     sent += 1;
+                }
+
+                // Direct announcements, for networks where multicast does not
+                // survive the access point.
+                for dest in &unicast_to {
+                    if sock.send_to(&payload, dest).is_ok() {
+                        sent += 1;
+                    }
                 }
 
                 if sent == 0 {
