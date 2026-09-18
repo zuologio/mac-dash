@@ -231,13 +231,32 @@ fn renders_data_that_was_previously_unused() {
 }
 
 /// The clock reads from the Mac's timestamp, never the Pi's own clock.
+///
+/// The rendered value is in the host's local timezone, so this asserts the
+/// shape rather than an absolute time — pinning a time here would make the
+/// test pass only in the timezone it was written in. `format::clock_at`
+/// covers the offset arithmetic exactly.
 #[test]
 fn renders_the_clock_from_packet_time() {
     let d = populated();
     let out = render_at(128, 37, &d, 40_000);
-    // sample_packet's ts is 1_789_430_400_000 = 2026-09-15T00:00:00Z
-    assert!(out.contains("00:00:00"), "clock not drawn from packet ts");
-    assert!(out.contains("Tue 15 Sep"), "date not drawn from packet ts");
+    let header = out.lines().next().expect("no header");
+    let clock = header
+        .split_whitespace()
+        .find(|w| w.len() == 8 && w.as_bytes()[2] == b':' && w.as_bytes()[5] == b':')
+        .unwrap_or_else(|| panic!("no clock in header: {header:?}"));
+    assert!(
+        clock.chars().all(|c| c.is_ascii_digit() || c == ':'),
+        "clock is not a time: {clock:?}"
+    );
+    // sample_packet's ts is 2026-09-15T00:00:00Z; every timezone on Earth
+    // puts that within a day of the 14th-16th of September.
+    assert!(
+        ["Mon 14 Sep", "Tue 15 Sep", "Wed 16 Sep"]
+            .iter()
+            .any(|d| out.contains(d)),
+        "date not drawn from the packet timestamp"
+    );
 }
 
 /// Before any packet there is no authoritative time to show.
@@ -277,4 +296,52 @@ fn renders_display_off_state() {
     assert!(out.contains("DISPLAY OFF"), "display-off state not shown");
     // Data is current, so it must still be rendered.
     assert!(out.contains("studio.local"));
+}
+
+/// The symptom that prompted this: at 5 Hz the CPU headline visibly twitched
+/// as values crossed a digit boundary. Every field in that row must keep its
+/// width, or everything to its right slides sideways on the next packet.
+#[test]
+fn cpu_headline_does_not_shift_as_values_change() {
+    let mut widths = Vec::new();
+    let mut texts = Vec::new();
+    // Values chosen to straddle every width boundary these formatters have:
+    // 9.9 -> 10.0 (percent), 9.99 -> 10.00 and 99 -> 100 (load).
+    for (total, usr, sys, load) in [
+        (0.0f32, 0.0f32, 0.0f32, 0.52f32),
+        (9.9, 9.9, 9.9, 9.99),
+        (10.0, 10.0, 10.0, 10.4),
+        (99.9, 99.9, 99.9, 99.9),
+        (100.0, 100.0, 100.0, 128.0),
+    ] {
+        let mut d = Dashboard::new();
+        let mut p = sample_packet();
+        p.cpu.total = Some(total);
+        p.cpu.user = Some(usr);
+        p.cpu.sys = Some(sys);
+        p.cpu.load = [load, load, load];
+        d.ingest(p, 1000);
+        let out = render_at(128, 37, &d, 1_100);
+        let line = out
+            .lines()
+            .find(|l| l.contains("usr"))
+            .expect("CPU headline missing")
+            .to_string();
+        // Where each label sits is what must not move.
+        widths.push((
+            line.find("usr").unwrap(),
+            line.find("sys").unwrap(),
+            line.find("load").unwrap(),
+            line.find("cores").unwrap(),
+        ));
+        texts.push(line);
+    }
+    for (i, w) in widths.iter().enumerate().skip(1) {
+        assert_eq!(
+            *w, widths[0],
+            "field positions moved between samples:\n  {}\n  {}",
+            texts[0].trim_end(),
+            texts[i].trim_end()
+        );
+    }
 }

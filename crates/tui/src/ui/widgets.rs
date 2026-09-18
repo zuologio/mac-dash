@@ -83,11 +83,15 @@ pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
                 })
                 .add_modifier(Modifier::BOLD),
         ),
+        // Every field here is fixed-width, and deliberately not trimmed.
+        // `pct` and `load` pad precisely so that a value crossing 9.9 -> 10.0
+        // does not widen its field and shove everything to its right along;
+        // trimming them throws that away and the whole line twitches at 5 Hz.
         Span::styled(
             format!(
                 "  usr {}  sys {}",
-                format::pct(pkt.cpu.user).trim(),
-                format::pct(pkt.cpu.sys).trim()
+                format::pct(pkt.cpu.user),
+                format::pct(pkt.cpu.sys)
             ),
             fg(dimmed, theme::DIM),
         ),
@@ -96,8 +100,11 @@ pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
         // belong side by side.
         Span::styled(
             format!(
-                "   load {:.2} {:.2} {:.2}   {} cores",
-                pkt.cpu.load[0], pkt.cpu.load[1], pkt.cpu.load[2], pkt.cpu.ncpu
+                "   load {} {} {}   {} cores",
+                format::load(pkt.cpu.load[0]),
+                format::load(pkt.cpu.load[1]),
+                format::load(pkt.cpu.load[2]),
+                pkt.cpu.ncpu
             ),
             fg(dimmed, theme::DIM),
         ),
