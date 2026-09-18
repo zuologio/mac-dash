@@ -60,6 +60,7 @@ echo "Installing to ${HOST}"
 STAGE="$(mktemp -d -t macdash)"
 trap 'rm -rf "$STAGE"' EXIT
 cp "$BIN" "$STAGE/macdash-tui"
+cp "$(dirname "$0")/make-console-font.py" "$STAGE/macdash-mkfont.py"
 
 cat > "$STAGE/macdash-install.sh" <<REMOTE
 set -euo pipefail
@@ -67,6 +68,33 @@ set -euo pipefail
 systemctl stop macdash 2>/dev/null || true
 install -m 755 /tmp/macdash-tui /usr/local/bin/macdash-tui
 rm -f /tmp/macdash-tui
+
+# The console cannot draw this dashboard with any font Raspberry Pi OS ships.
+# Every one of them is missing the partial-block characters the sparklines and
+# meters are built from (U+2581-2587, U+2589-258F, U+25B0/25B1), and the
+# console is capped at 512 glyphs per font, so there is no fuller font to
+# install. The kernel substitutes a fallback glyph, which is why an unpatched
+# panel shows a row of '#' where the bars should be.
+#
+# So the glyphs are synthesized -- they are pure geometry -- and spliced into
+# a stock font over codepoints this display will never show.
+FONT_SRC=""
+for candidate in Uni2-Terminus24x12 Uni2-Terminus16 Lat15-Terminus16; do
+    if [ -f "/usr/share/consolefonts/\${candidate}.psf.gz" ]; then
+        FONT_SRC="/usr/share/consolefonts/\${candidate}.psf.gz"
+        break
+    fi
+done
+if [ -n "\$FONT_SRC" ] && command -v python3 >/dev/null; then
+    mkdir -p /usr/local/share/consolefonts
+    if python3 /tmp/macdash-mkfont.py "\$FONT_SRC" \
+            /usr/local/share/consolefonts/macdash.psf; then
+        echo "  console font built from \$(basename "\$FONT_SRC")"
+    else
+        echo "  WARNING: could not build the console font; bars will show as '#'"
+    fi
+fi
+rm -f /tmp/macdash-mkfont.py
 
 # The dashboard and a login prompt cannot both own tty1. Raspberry Pi OS
 # ships getty@tty1 with an autologin drop-in, and leaving it running means
@@ -90,6 +118,14 @@ Wants=network-online.target
 Type=simple
 # Blank the console before drawing, so late boot output does not sit under
 # the UI. The TUI also repaints fully every few seconds as a backstop.
+# The kernel logs to tty1 too (console=tty1 on the Pi's cmdline), and it does
+# so whenever it likes -- WiFi power-save messages land minutes after boot, on
+# top of the UI. A one-shot clear cannot fix that, so raise the console log
+# level first: only genuine emergencies reach the panel. journalctl still
+# records everything.
+ExecStartPre=-/sbin/sysctl -q -w kernel.printk="1 4 1 3"
+# Load the patched font, without which every bar renders as '#'.
+ExecStartPre=-/bin/sh -c '[ -f /usr/local/share/consolefonts/macdash.psf ] && setfont /usr/local/share/consolefonts/macdash.psf -C /dev/tty1'
 ExecStartPre=/bin/sh -c 'clear >/dev/tty1 2>/dev/null || true'
 ExecStart=/usr/local/bin/macdash-tui ${ARGS}
 Restart=always
@@ -134,7 +170,8 @@ systemctl --no-pager --lines=10 status macdash || true
 REMOTE
 
 echo "Copying files…"
-scp -q "$STAGE/macdash-tui" "$STAGE/macdash-install.sh" "${HOST}:/tmp/"
+scp -q "$STAGE/macdash-tui" "$STAGE/macdash-install.sh" \
+       "$STAGE/macdash-mkfont.py" "${HOST}:/tmp/"
 
 echo "Installing…"
 # -t allocates a TTY so sudo can prompt for its password; the script runs from
