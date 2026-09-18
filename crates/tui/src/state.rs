@@ -20,6 +20,8 @@ pub struct Dashboard {
     pub cpu_history: Ring,
     pub rx_history: Ring,
     pub tx_history: Ring,
+    pub mem_history: Ring,
+    pub temp_history: Ring,
     pub packets_received: u64,
     /// Peak network rate seen, used to scale the sparkline. Without a running
     /// peak the graph rescales on every sample and the shape is unreadable.
@@ -34,13 +36,15 @@ impl Dashboard {
             cpu_history: Ring::new(HISTORY),
             rx_history: Ring::new(HISTORY),
             tx_history: Ring::new(HISTORY),
+            mem_history: Ring::new(HISTORY),
+            temp_history: Ring::new(HISTORY),
             packets_received: 0,
             net_peak: 1,
         }
     }
 
     pub fn ingest(&mut self, packet: StatsPacket, now_ms: u64) {
-        self.presence.on_packet(now_ms);
+        self.presence.on_packet(now_ms, packet.display_asleep);
         self.packets_received += 1;
 
         // `None` means the agent had no baseline (first sample, or a sleep
@@ -60,6 +64,23 @@ impl Dashboard {
             if let Some(tx) = net.tx_bps {
                 self.tx_history.push(tx);
                 self.net_peak = self.net_peak.max(tx);
+            }
+        }
+
+        if packet.mem.total > 0 {
+            let pct = packet.mem.used as f64 / packet.mem.total as f64 * 100.0;
+            self.mem_history.push(pct as u64);
+        }
+
+        // Temperature is the one metric allowed to be absent (private API,
+        // see agent/collect/temp.rs). Carry the previous value rather than
+        // drawing a false zero, for the same reason the CPU history does.
+        match packet.temp.as_ref().and_then(|t| t.primary()) {
+            Some(c) => self.temp_history.push(c as u64),
+            None => {
+                if let Some(last) = self.temp_history.last() {
+                    self.temp_history.push(last);
+                }
             }
         }
 
@@ -148,6 +169,7 @@ mod tests {
                 tx_total: 0,
             }),
             temp: None,
+            display_asleep: None,
             procs: vec![],
         }
     }
@@ -213,5 +235,63 @@ mod tests {
             d.ingest(packet(Some(i as f32 % 100.0), Some(i)), i * 200);
         }
         assert_eq!(d.cpu_history.tail(usize::MAX).len(), HISTORY);
+    }
+
+    #[test]
+    fn ingesting_records_memory_and_temperature_history() {
+        let mut d = Dashboard::new();
+        let mut p = packet(Some(10.0), None);
+        p.mem.used = 8_589_934_592;
+        p.mem.total = 17_179_869_184;
+        p.temp = Some(macdash_proto::Temp {
+            soc: Some(44.0),
+            gpu: None,
+            battery: None,
+        });
+        d.ingest(p, 0);
+        assert_eq!(d.mem_history.last(), Some(50), "50% of total");
+        assert_eq!(d.temp_history.last(), Some(44));
+    }
+
+    /// Temperature may be absent. A null must not punch a false zero into
+    /// the graph, exactly as for CPU.
+    #[test]
+    fn absent_temperature_holds_the_previous_value() {
+        let mut d = Dashboard::new();
+        let mut p = packet(Some(10.0), None);
+        p.temp = Some(macdash_proto::Temp {
+            soc: Some(50.0),
+            gpu: None,
+            battery: None,
+        });
+        d.ingest(p, 0);
+        let mut p2 = packet(Some(10.0), None);
+        p2.temp = None;
+        d.ingest(p2, 200);
+        assert_eq!(
+            d.temp_history.tail(10),
+            vec![50, 50],
+            "should hold, not drop to 0"
+        );
+    }
+
+    #[test]
+    fn new_histories_stay_bounded() {
+        let mut d = Dashboard::new();
+        for i in 0..1000 {
+            d.ingest(packet(Some(1.0), Some(i)), i * 200);
+        }
+        assert_eq!(d.mem_history.tail(usize::MAX).len(), HISTORY);
+    }
+
+    /// The display flag must reach the presence tracker, or the panel never
+    /// darkens when the Mac's screen sleeps.
+    #[test]
+    fn display_flag_reaches_presence() {
+        let mut d = Dashboard::new();
+        let mut p = packet(Some(1.0), None);
+        p.display_asleep = Some(true);
+        d.ingest(p, 0);
+        assert_eq!(d.presence(100), Presence::DisplayOff);
     }
 }

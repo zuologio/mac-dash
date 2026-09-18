@@ -48,6 +48,7 @@ fn sample_packet() -> StatsPacket {
             rx_total: 1_958_375_424,
             tx_total: 255_309_824,
         }),
+        display_asleep: None,
         temp: Some(Temp {
             soc: Some(44.8),
             gpu: None,
@@ -199,4 +200,81 @@ fn long_strings_do_not_overflow() {
             assert_eq!(line.chars().count(), w as usize, "overflow at {w}x{h}");
         }
     }
+}
+
+/// The whole point of this work: the target panel was 73.9% empty.
+#[test]
+fn target_panel_is_not_mostly_empty() {
+    let d = populated();
+    let out = render_at(128, 37, &d, 40_000);
+    let total: usize = out.lines().map(|l| l.chars().count()).sum();
+    let blank: usize = out
+        .lines()
+        .map(|l| l.chars().filter(|c| *c == ' ').count())
+        .sum();
+    let pct = blank as f64 / total as f64 * 100.0;
+    assert!(
+        pct < 60.0,
+        "target panel is {pct:.1}% blank; the layout is wasting space"
+    );
+}
+
+/// Fields that already crossed the wire but were never drawn.
+#[test]
+fn renders_data_that_was_previously_unused() {
+    let d = populated();
+    let out = render_at(128, 37, &d, 40_000);
+    assert!(out.contains("load"), "load averages missing");
+    assert!(out.contains("2.29"), "5-minute load average missing");
+    assert!(out.contains("compressed"), "compressed memory missing");
+    assert!(out.contains("session"), "session network totals missing");
+}
+
+/// The clock reads from the Mac's timestamp, never the Pi's own clock.
+#[test]
+fn renders_the_clock_from_packet_time() {
+    let d = populated();
+    let out = render_at(128, 37, &d, 40_000);
+    // sample_packet's ts is 1_789_430_400_000 = 2026-09-15T00:00:00Z
+    assert!(out.contains("00:00:00"), "clock not drawn from packet ts");
+    assert!(out.contains("Tue 15 Sep"), "date not drawn from packet ts");
+}
+
+/// Before any packet there is no authoritative time to show.
+#[test]
+fn clock_is_blank_before_the_first_packet() {
+    let d = Dashboard::new();
+    let out = render_at(128, 37, &d, 0);
+    assert!(
+        out.contains("--:--:--"),
+        "should show a placeholder, not a time"
+    );
+}
+
+/// Eight processes, up from five.
+#[test]
+fn renders_the_full_process_list() {
+    let mut d = Dashboard::new();
+    let mut p = sample_packet();
+    p.procs = (0..macdash_proto::TOP_PROC_COUNT)
+        .map(|i| Proc::new(i as i32, format!("proc{i}"), 10.0 - i as f32, 1 << 20))
+        .collect();
+    d.ingest(p, 1000);
+    let out = render_at(128, 37, &d, 1_100);
+    for i in 0..macdash_proto::TOP_PROC_COUNT {
+        assert!(out.contains(&format!("proc{i}")), "process {i} missing");
+    }
+}
+
+/// Display sleep must be visible, with the data still on screen.
+#[test]
+fn renders_display_off_state() {
+    let mut d = Dashboard::new();
+    let mut p = sample_packet();
+    p.display_asleep = Some(true);
+    d.ingest(p, 1000);
+    let out = render_at(128, 37, &d, 1_100);
+    assert!(out.contains("DISPLAY OFF"), "display-off state not shown");
+    // Data is current, so it must still be rendered.
+    assert!(out.contains("studio.local"));
 }

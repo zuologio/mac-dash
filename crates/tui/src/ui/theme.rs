@@ -42,6 +42,7 @@ pub fn temp_scale(c: f32) -> Color {
 pub fn presence_color(p: Presence) -> Color {
     match p {
         Presence::Live => OK,
+        Presence::DisplayOff => DIM,
         Presence::Stale => WARN,
         Presence::Asleep => DIM,
         Presence::Waiting => ACCENT,

@@ -91,6 +91,16 @@ pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
             ),
             fg(dimmed, theme::DIM),
         ),
+        // Load averages relative to core count: 8.0 means something very
+        // different on a 4-core machine than on a 24-core one, so the two
+        // belong side by side.
+        Span::styled(
+            format!(
+                "   load {:.2} {:.2} {:.2}   {} cores",
+                pkt.cpu.load[0], pkt.cpu.load[1], pkt.cpu.load[2], pkt.cpu.ncpu
+            ),
+            fg(dimmed, theme::DIM),
+        ),
     ]);
     f.render_widget(Paragraph::new(headline), rows[0]);
 
@@ -117,15 +127,17 @@ pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
 
     if split[1].height > 0 && !dash.cpu_history.is_empty() {
         let data = dash.cpu_history.tail(split[1].width as usize);
-        // Bounded height, for the same reason as the network graphs.
-        let mut graph = split[1];
-        graph.height = graph.height.min(4);
+        // Deliberately *not* height-capped the way the network graphs are.
+        // Their scale is relative to the running peak, so stretching them
+        // turns a 2 KB/s wiggle into a cliff. This one is pinned to 0-100%,
+        // an absolute scale, where extra rows buy real resolution and cannot
+        // exaggerate anything.
         f.render_widget(
             Sparkline::default()
                 .data(&data)
                 .max(100)
                 .style(fg(dimmed, theme::ACCENT)),
-            graph,
+            split[1],
         );
     }
 }
@@ -168,6 +180,7 @@ pub fn mem_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
         .constraints([
             Constraint::Length(1),
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(0),
         ])
         .split(inner);
@@ -202,13 +215,38 @@ pub fn mem_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
             format!("pressure {:.0}%", m.pressure),
             fg(dimmed, theme::scale(m.pressure)),
         )];
-        if m.swap_used > 0 {
+        // Compressed memory is macOS-specific and often large; without it the
+        // used figure looks inexplicable on a machine under pressure.
+        if m.compressed > 0 {
             spans.push(Span::styled(
-                format!("  swap {}", format::bytes(m.swap_used)),
+                format!("  compressed {}", format::bytes(m.compressed)),
+                fg(dimmed, theme::DIM),
+            ));
+        }
+        if m.swap_used > 0 {
+            // With the denominator: "11.8G" alone says nothing about whether
+            // the machine is in trouble.
+            spans.push(Span::styled(
+                format!(
+                    "  swap {} / {}",
+                    format::bytes(m.swap_used),
+                    format::bytes(m.swap_total)
+                ),
                 fg(dimmed, theme::WARN),
             ));
         }
         f.render_widget(Paragraph::new(Line::from(spans)), rows[2]);
+    }
+
+    if rows[3].height > 0 && !dash.mem_history.is_empty() {
+        let data = dash.mem_history.tail(rows[3].width as usize);
+        f.render_widget(
+            Sparkline::default()
+                .data(&data)
+                .max(100)
+                .style(fg(dimmed, theme::OK)),
+            rows[3],
+        );
     }
 }
 
@@ -257,7 +295,24 @@ pub fn temp_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
         }
     }
 
-    f.render_widget(Paragraph::new(lines), inner);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(lines.len() as u16), Constraint::Min(0)])
+        .split(inner);
+    f.render_widget(Paragraph::new(lines), rows[0]);
+
+    if rows[1].height > 0 && !dash.temp_history.is_empty() {
+        let data = dash.temp_history.tail(rows[1].width as usize);
+        // Scaled to 100C, where Apple Silicon starts throttling, so the
+        // graph's height means the same thing from one machine to the next.
+        f.render_widget(
+            Sparkline::default()
+                .data(&data)
+                .max(100)
+                .style(fg(dimmed, theme::WARN)),
+            rows[1],
+        );
+    }
 }
 
 pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
@@ -333,6 +388,24 @@ pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
                 graphs[idx],
             );
         }
+
+        // Session totals on the bottom row, in the space the capped graphs
+        // deliberately leave empty.
+        if rows[1].height >= 4 {
+            let mut total_row = rows[1];
+            total_row.y += rows[1].height - 1;
+            total_row.height = 1;
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("session  ", fg(dimmed, theme::DIM)),
+                    Span::styled("▼ ", fg(dimmed, theme::RX)),
+                    Span::styled(format::bytes(net.rx_total), fg(dimmed, theme::DIM)),
+                    Span::styled("   ▲ ", fg(dimmed, theme::TX)),
+                    Span::styled(format::bytes(net.tx_total), fg(dimmed, theme::DIM)),
+                ])),
+                total_row,
+            );
+        }
     }
 }
 
@@ -349,12 +422,20 @@ pub fn proc_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
         return;
     }
 
+    // A process name needs about 25 columns; anything beyond that is width
+    // the names cannot use. On a wide panel it goes to a bar instead, which
+    // turns the list into something readable at a glance from across a desk
+    // rather than a column of numbers to be compared by eye.
+    const NAME_W: u16 = 25;
+    const NUM_W: u16 = 16; // two 7-wide columns plus spacing
+    let bar_w = inner.width.saturating_sub(NAME_W + NUM_W + 2).min(40);
+
     let rows: Vec<Row> = pkt
         .procs
         .iter()
         .take(inner.height as usize)
         .map(|p| {
-            Row::new(vec![
+            let mut cells = vec![
                 Span::styled(p.name.clone(), fg(dimmed, theme::FG)),
                 Span::styled(
                     format!("{:>6.1}%", p.cpu),
@@ -366,21 +447,26 @@ pub fn proc_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
                     format!("{:>6}", format::bytes(p.mem)),
                     fg(dimmed, theme::DIM),
                 ),
-            ])
+            ];
+            if bar_w > 0 {
+                // Scaled to one core, matching the percentage beside it.
+                let filled = (p.cpu.min(100.0) / 100.0 * bar_w as f32).round() as usize;
+                cells.push(Span::styled(
+                    "▰".repeat(filled) + &"▱".repeat(bar_w as usize - filled),
+                    fg(dimmed, theme::scale(p.cpu.min(100.0))),
+                ));
+            }
+            Row::new(cells)
         })
         .collect();
 
-    f.render_widget(
-        Table::new(
-            rows,
-            [
-                Constraint::Min(10),
-                Constraint::Length(7),
-                Constraint::Length(7),
-            ],
-        )
-        .column_spacing(1),
-        inner,
-    );
+    let widths = [
+        Constraint::Length(NAME_W),
+        Constraint::Length(7),
+        Constraint::Length(7),
+        Constraint::Min(0),
+    ];
+
+    f.render_widget(Table::new(rows, widths).column_spacing(1), inner);
 }
 

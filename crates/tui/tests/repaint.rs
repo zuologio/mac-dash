@@ -73,6 +73,7 @@ fn packet() -> StatsPacket {
             rx_total: 1_958_375_424,
             tx_total: 255_309_824,
         }),
+        display_asleep: None,
         temp: Some(Temp {
             soc: Some(44.8),
             gpu: None,

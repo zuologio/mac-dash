@@ -62,6 +62,9 @@ fn render_header(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence
 
     let dot = match presence {
         Presence::Live => "●",
+        // Hollow like Asleep — the panel is dark either way — but distinct,
+        // because the data behind it is live rather than stale.
+        Presence::DisplayOff => "◍",
         Presence::Stale => "◐",
         Presence::Asleep => "○",
         Presence::Waiting => "◌",
@@ -82,6 +85,26 @@ fn render_header(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence
             format!("  up {uptime}"),
             Style::default().fg(theme::DIM),
         ));
+    }
+
+    // Clock from the Mac's timestamp, right-aligned. A Pi Zero has no RTC,
+    // so its own clock is whatever NTP gave it at boot — or wrong, with
+    // nothing on screen to say which. See format::clock.
+    let ts = dash.latest.as_ref().map(|p| p.ts);
+    let right = {
+        let clock = format::clock(ts);
+        let date = format::date(ts);
+        if date.is_empty() || area.width < 60 {
+            clock
+        } else {
+            format!("{clock}   {date}")
+        }
+    };
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    if used + right.chars().count() + 2 <= area.width as usize {
+        let pad = area.width as usize - used - right.chars().count() - 1;
+        spans.push(Span::raw(" ".repeat(pad)));
+        spans.push(Span::styled(right, Style::default().fg(theme::DIM)));
     }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -140,47 +163,44 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
 
     let show_procs = area.height >= SHORT;
 
-    // The top row is sized to its content (headline, gauge, cores, a few rows
-    // of sparkline) rather than to a share of the screen: on a tall panel a
-    // percentage split would stretch the CPU graph to absurd height while the
-    // process list — which actually benefits from rows — stayed short.
-    let top_height = if show_procs {
-        10.min(area.height / 2)
+    // The process panel is sized to its content, not to a share of the
+    // screen. Its length is capped at TOP_PROC_COUNT by the packet budget, so
+    // giving it half a tall panel only moves the blank space inside its
+    // border. Everything left over goes to the CPU history, because a
+    // sparkline gets more useful with every row it is given.
+    let proc_height = if show_procs {
+        (macdash_proto::TOP_PROC_COUNT as u16 + 3).min(area.height / 2)
     } else {
-        area.height
+        0
     };
 
-    let row_constraints = if show_procs {
-        [Constraint::Length(top_height), Constraint::Min(6)]
-    } else {
-        [Constraint::Min(6), Constraint::Length(0)]
-    };
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(row_constraints)
+        .constraints([Constraint::Min(6), Constraint::Length(proc_height)])
         .split(area);
 
     let top = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(rows[0]);
 
     widgets::cpu_panel(f, top[0], dash, dimmed);
 
+    // Three panels down the right, each with room for its own history.
     let right = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(3)])
+        .constraints([
+            Constraint::Percentage(38),
+            Constraint::Percentage(28),
+            Constraint::Min(3),
+        ])
         .split(top[1]);
     widgets::mem_panel(f, right[0], dash, dimmed);
     widgets::temp_panel(f, right[1], dash, dimmed);
+    widgets::net_panel(f, right[2], dash, dimmed);
 
     if show_procs && rows[1].height > 0 {
-        let bottom = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .split(rows[1]);
-        widgets::proc_panel(f, bottom[0], dash, dimmed);
-        widgets::net_panel(f, bottom[1], dash, dimmed);
+        widgets::proc_panel(f, rows[1], dash, dimmed);
     }
 }
 
@@ -218,6 +238,12 @@ fn render_status(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence
             }
             spans.push(Span::styled(
                 format!("{} pkts", dash.packets_received),
+                Style::default().fg(theme::DIM),
+            ));
+        }
+        Presence::DisplayOff => {
+            spans.push(Span::styled(
+                "Mac's display is asleep",
                 Style::default().fg(theme::DIM),
             ));
         }
