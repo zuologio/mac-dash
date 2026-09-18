@@ -8,6 +8,7 @@
 
 mod beacon;
 mod brightness;
+mod console_font;
 mod receiver;
 mod repaint;
 mod state;
@@ -39,6 +40,9 @@ struct Args {
     name: Option<String>,
     backlight: Option<String>,
     no_beacon: bool,
+    /// Patched console font to load before drawing. The bars are made of
+    /// partial-block glyphs that no stock console font has.
+    font: Option<String>,
     /// Macs to announce to directly, for networks where the access point
     /// drops multicast between wireless and wired clients.
     macs: Vec<SocketAddr>,
@@ -50,6 +54,7 @@ fn parse_args() -> Result<Args, String> {
         name: None,
         backlight: None,
         no_beacon: false,
+        font: None,
         macs: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
@@ -62,6 +67,7 @@ fn parse_args() -> Result<Args, String> {
             "--name" => args.name = Some(it.next().ok_or("--name needs a value")?),
             "--backlight" => args.backlight = Some(it.next().ok_or("--backlight needs a path")?),
             "--no-beacon" => args.no_beacon = true,
+            "--font" => args.font = Some(it.next().ok_or("--font needs a path")?),
             "--mac" => {
                 let v = it.next().ok_or("--mac needs an address")?;
                 let with_port = if v.contains(':') {
@@ -99,6 +105,10 @@ OPTIONS:
                         multicast. Use when the dashboard never leaves
                         WAITING: many access points drop multicast
                         between wireless and wired clients.
+    --font <path>       Console font to load before drawing, e.g.
+                        /usr/local/share/consolefonts/macdash.psf. Without it
+                        the bars render as '#' on a Linux console, which has
+                        no partial-block glyphs of its own.
     --no-beacon         Do not announce; only useful when the agent was
                         started with a matching --target
     -h, --help          Show this help
@@ -156,7 +166,7 @@ fn main() {
 
     let mut backlight = MaybeBacklight::new(args.backlight.as_deref());
 
-    if let Err(e) = run(rx, &mut backlight) {
+    if let Err(e) = run(rx, &mut backlight, args.font.as_deref()) {
         // ENXIO/ENOTTY here means stdout is not a terminal — the common case
         // being a pipe or a cron job. The raw errno ("Device not configured")
         // explains nothing, so name the actual problem and the way out.
@@ -181,8 +191,27 @@ fn main() {
 fn run(
     rx: std::sync::mpsc::Receiver<macdash_proto::StatsPacket>,
     backlight: &mut MaybeBacklight,
+    font: Option<&str>,
 ) -> io::Result<()> {
     let mut terminal = setup_terminal()?;
+
+    // Load the console font here rather than from the service file. systemd
+    // resets the tty around ExecStartPre/Post (TTYReset, TTYVHangup), which
+    // silently discards a font loaded there -- the console keeps whatever it
+    // had and nothing is logged. By this point we own the console, so nothing
+    // is going to reset it out from under us.
+    //
+    // Never fatal: ugly bars beat no dashboard, and over SSH this cannot work
+    // at all (no console to set), which is entirely normal.
+    if let Some(path) = font {
+        match console_font::load(path, "/dev/tty1") {
+            Ok(f) => eprintln!(
+                "macdash: console font loaded ({}x{}, {} glyphs)",
+                f.width, f.height, f.count
+            ),
+            Err(e) => eprintln!("macdash: could not load {path}: {e}"),
+        }
+    }
     let mut dash = Dashboard::new();
     let mut last_frame = Instant::now();
     let mut repainter = repaint::Repainter::new();

@@ -64,6 +64,12 @@ if [[ ! -f "$BIN" ]]; then
 fi
 
 ARGS="--name $(hostname -s 2>/dev/null || echo display)"
+# The dashboard loads the console font itself. Doing it from the service file
+# failed silently three different ways -- systemd resets the tty around
+# ExecStartPre/Post and the console keeps whatever font it had, with nothing
+# logged. By the time the binary runs it owns the console, so nothing can
+# reset it afterwards.
+ARGS="$ARGS --font /usr/local/share/consolefonts/macdash.psf"
 [[ -n "$BACKLIGHT" ]] && ARGS="$ARGS --backlight $BACKLIGHT"
 [[ -n "$MAC_ADDR" ]] && ARGS="$ARGS --mac $MAC_ADDR"
 
@@ -187,20 +193,6 @@ Type=simple
 ExecStartPre=-/sbin/sysctl -q -w kernel.printk="1 4 1 3"
 ExecStartPre=/bin/sh -c 'clear >/dev/tty1 2>/dev/null || true'
 ExecStart=/usr/local/bin/macdash-tui ${ARGS}
-# The font loads *after* start, not before, and this is load-bearing:
-# TTYReset and TTYVHangup below reset tty1 "before and after execution"
-# (systemd.exec(5)), which discards any font an ExecStartPre had loaded. The
-# console then silently keeps whatever it had, with nothing logged.
-#
-# The sleep lets the TUI take the console first; setfont on a tty that is
-# mid-handover is what loses the font the second time.
-# The trailing & matters: an ExecStartPost that sleeps keeps the unit in
-# 'activating' for its whole duration, and the installer's readiness check --
-# and anything
-# else asking systemd whether this started -- sees a service that has not
-# come up yet. Backgrounding it lets the unit reach 'active' immediately
-# while the font still lands a couple of seconds later.
-ExecStartPost=-/bin/sh -c '{ sleep 2; [ -f /usr/local/share/consolefonts/macdash.psf ] && setfont /usr/local/share/consolefonts/macdash.psf -C /dev/tty1; } &'
 Restart=always
 RestartSec=2
 
