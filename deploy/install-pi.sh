@@ -11,6 +11,10 @@ if [[ -z "$HOST" ]]; then
     echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>]"
     echo "          [--font <console-font>] [--zero2]"
     echo
+    echo "  --ttf    a .ttf/.otf to rasterize into a console font, for a"
+    echo "           look the distro does not ship (DepartureMono,"
+    echo "           BigBlueTerminal). Needs freetype-py on this machine."
+    echo "  --ttf-size  pixel size for --ttf (default 24)."
     echo "  --font   console font to patch and load, without the .psf.gz."
     echo "           Default Lat15-Terminus32x16 (16x32 cells: 120x33 on a"
     echo "           1080p panel, big enough to read from a desk away)."
@@ -27,11 +31,16 @@ MAC_ADDR=""
 # assume, while the same panel at 8x16 is 240x67 and leaves the dashboard
 # rattling around in a grid twice the size it was designed for.
 CONSOLE_FONT="Lat15-Terminus32x16"
+# A .ttf/.otf to rasterize instead, for a font the distro does not ship.
+TTF_FONT=""
+TTF_SIZE="24"
 TARGET="arm-unknown-linux-musleabihf"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --backlight) BACKLIGHT="$2"; shift 2 ;;
         --font)      CONSOLE_FONT="$2"; shift 2 ;;
+        --ttf)       TTF_FONT="$2"; shift 2 ;;
+        --ttf-size)  TTF_SIZE="$2"; shift 2 ;;
         --mac)       MAC_ADDR="$2"; shift 2 ;;
         --zero2)     TARGET="armv7-unknown-linux-musleabihf"; shift ;;
         *) echo "unknown option: $1"; exit 1 ;;
@@ -74,6 +83,22 @@ trap 'rm -rf "$STAGE"' EXIT
 cp "$BIN" "$STAGE/macdash-tui"
 cp "$(dirname "$0")/make-console-font.py" "$STAGE/macdash-mkfont.py"
 
+# A .ttf has to be rasterized to a bitmap before the console can use it, and
+# that needs freetype -- which is on this machine, not necessarily on a Pi
+# Zero. So it happens here and only the finished .psf crosses the network.
+if [[ -n "$TTF_FONT" ]]; then
+    if [[ ! -f "$TTF_FONT" ]]; then
+        echo "No font at $TTF_FONT"
+        exit 1
+    fi
+    echo "Rasterizing $(basename "$TTF_FONT") at ${TTF_SIZE}px…"
+    if ! python3 "$(dirname "$0")/ttf-to-console-font.py" \
+            "$TTF_FONT" "$TTF_SIZE" "$STAGE/macdash-font.psf"; then
+        echo "Could not rasterize it; install freetype-py or drop --ttf."
+        exit 1
+    fi
+fi
+
 cat > "$STAGE/macdash-install.sh" <<REMOTE
 set -euo pipefail
 
@@ -90,6 +115,14 @@ rm -f /tmp/macdash-tui
 #
 # So the glyphs are synthesized -- they are pure geometry -- and spliced into
 # a stock font over codepoints this display will never show.
+# A font rasterized on the build machine wins: it is what was asked for, and
+# the Pi may have no freetype to make one itself.
+if [ -f /tmp/macdash-font.psf ]; then
+    mkdir -p /usr/local/share/consolefonts
+    install -m 644 /tmp/macdash-font.psf /usr/local/share/consolefonts/macdash.psf
+    rm -f /tmp/macdash-font.psf /tmp/macdash-mkfont.py
+    echo "  console font: rasterized from the supplied .ttf"
+else
 FONT_SRC=""
 for candidate in ${CONSOLE_FONT} Lat15-Terminus32x16 Lat15-Terminus16 Lat15-VGA16; do
     if [ -f "/usr/share/consolefonts/\${candidate}.psf.gz" ]; then
@@ -107,6 +140,7 @@ if [ -n "\$FONT_SRC" ] && command -v python3 >/dev/null; then
     fi
 fi
 rm -f /tmp/macdash-mkfont.py
+fi
 
 # The dashboard and a login prompt cannot both own tty1. Raspberry Pi OS
 # ships getty@tty1 with an autologin drop-in, and leaving it running means
@@ -182,8 +216,9 @@ systemctl --no-pager --lines=10 status macdash || true
 REMOTE
 
 echo "Copying files…"
-scp -q "$STAGE/macdash-tui" "$STAGE/macdash-install.sh" \
-       "$STAGE/macdash-mkfont.py" "${HOST}:/tmp/"
+SCP_FILES=("$STAGE/macdash-tui" "$STAGE/macdash-install.sh" "$STAGE/macdash-mkfont.py")
+[[ -f "$STAGE/macdash-font.psf" ]] && SCP_FILES+=("$STAGE/macdash-font.psf")
+scp -q "${SCP_FILES[@]}" "${HOST}:/tmp/"
 
 echo "Installing…"
 # -t allocates a TTY so sudo can prompt for its password; the script runs from
