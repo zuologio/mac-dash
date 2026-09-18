@@ -38,9 +38,17 @@ pub const STATS_INTERVAL_MS: u64 = 200;
 /// visually identical to one refreshing at 5 Hz.
 pub const PROC_EVERY_N_TICKS: u64 = 5;
 
-/// Number of processes reported. Chosen so a fully-populated packet stays
-/// under `MAX_PACKET_BYTES`; see the budget test in `packet.rs`.
-pub const TOP_PROC_COUNT: usize = 5;
+/// Number of processes reported.
+///
+/// Eight is the ceiling, not a preference: the worst-case packet (64-char
+/// host, 24 cores, 24-char process names) costs ~80 bytes per process, so a
+/// ninth would exceed `MAX_PACKET_BYTES`. Two tests hold this from either
+/// side — the budget test proves eight fits, and
+/// `process_count_is_at_the_budget_ceiling` proves nine would not.
+///
+/// A longer list needs a second packet type at a slower cadence, not a
+/// bigger packet — see ANALYSIS.md §2.
+pub const TOP_PROC_COUNT: usize = 8;
 
 /// Safe UDP payload before IP fragmentation on a 1500-byte-MTU Ethernet or
 /// WiFi link. Enforced by a unit test, not by convention.

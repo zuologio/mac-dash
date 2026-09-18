@@ -205,7 +205,7 @@ impl std::error::Error for DecodeError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MAX_PACKET_BYTES, TOP_PROC_COUNT};
+    use crate::{MAX_PACKET_BYTES, MAX_PROC_NAME, TOP_PROC_COUNT};
 
     /// A packet populated to the worst case the agent can actually produce.
     fn worst_case() -> StatsPacket {
@@ -266,6 +266,31 @@ mod tests {
         assert!(
             bytes.len() <= MAX_PACKET_BYTES,
             "worst-case packet is {} bytes, over the {MAX_PACKET_BYTES} byte budget",
+            bytes.len()
+        );
+    }
+
+    /// The budget is measured against the worst case, not a typical packet.
+    /// A live packet is ~900 bytes and suggests room for a dozen more
+    /// processes; the worst case has room for none. Getting this wrong yields
+    /// a packet that fits on an idle Mac and fragments under load.
+    #[test]
+    fn process_count_is_at_the_budget_ceiling() {
+        let bytes = serde_json::to_vec(&worst_case()).unwrap();
+        let per_proc = {
+            let mut one_more = worst_case();
+            one_more.procs.push(Proc::new(
+                999_999,
+                "W".repeat(MAX_PROC_NAME),
+                999.9,
+                137_438_953_472,
+            ));
+            serde_json::to_vec(&one_more).unwrap().len() - bytes.len()
+        };
+        assert!(
+            bytes.len() + per_proc > MAX_PACKET_BYTES,
+            "TOP_PROC_COUNT is {TOP_PROC_COUNT} using {} of {MAX_PACKET_BYTES} bytes; \
+             another process would still fit, so the count is below the ceiling",
             bytes.len()
         );
     }
