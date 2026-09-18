@@ -99,6 +99,10 @@ if [[ -n "$TTF_FONT" ]]; then
     fi
 fi
 
+# NOTE: this heredoc is UNQUOTED, deliberately -- $ARGS and $CONSOLE_FONT
+# have to be expanded here, on the build machine. The cost is that every
+# backtick and $( ) inside it is also expanded here, including ones written
+# as prose. Do not use backticks in the comments below.
 cat > "$STAGE/macdash-install.sh" <<REMOTE
 set -euo pipefail
 
@@ -179,8 +183,9 @@ ExecStart=/usr/local/bin/macdash-tui ${ARGS}
 #
 # The sleep lets the TUI take the console first; setfont on a tty that is
 # mid-handover is what loses the font the second time.
-# `&` matters: an ExecStartPost that sleeps keeps the unit in 'activating'
-# for its whole duration, and the installer's readiness check -- and anything
+# The trailing & matters: an ExecStartPost that sleeps keeps the unit in
+# 'activating' for its whole duration, and the installer's readiness check --
+# and anything
 # else asking systemd whether this started -- sees a service that has not
 # come up yet. Backgrounding it lets the unit reach 'active' immediately
 # while the font still lands a couple of seconds later.
@@ -210,9 +215,11 @@ systemctl restart macdash
 # Poll rather than sleeping a fixed three seconds: a unit that is still
 # 'activating' is not a unit that failed, and treating it as one hands tty1
 # back to getty, which then fights the dashboard for the console forever.
-for _ in $(seq 1 15); do
+tries=0
+while [ \$tries -lt 15 ]; do
     systemctl is-active --quiet macdash && break
     systemctl is-failed --quiet macdash && break
+    tries=\$((tries + 1))
     sleep 1
 done
 if systemctl is-active --quiet macdash; then
@@ -235,6 +242,16 @@ systemctl --no-pager --lines=10 status macdash || true
 REMOTE
 
 echo "Copying files…"
+# The remote script is assembled by an unquoted heredoc, so the local shell
+# expands $(...) and backticks inside it -- including ones meant as prose in
+# a comment. A stray backtick corrupts the script before it is even written,
+# so this checks the result rather than trusting it. (The heredoc itself is
+# guarded by a test in this repo's deploy checks; see the comment above it.)
+if ! sh -n "$STAGE/macdash-install.sh"; then
+    echo "Generated install script is malformed; refusing to send it." >&2
+    exit 1
+fi
+
 SCP_FILES=("$STAGE/macdash-tui" "$STAGE/macdash-install.sh" "$STAGE/macdash-mkfont.py")
 [[ -f "$STAGE/macdash-font.psf" ]] && SCP_FILES+=("$STAGE/macdash-font.psf")
 scp -q "${SCP_FILES[@]}" "${HOST}:/tmp/"
