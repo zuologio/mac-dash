@@ -29,7 +29,13 @@ fn now_ms() -> u64 {
 }
 
 fn main() {
-    let (w, h) = (128u16, 37u16);
+    let (w, h) = {
+        let mut it = std::env::args().skip(1);
+        match (it.next(), it.next()) {
+            (Some(a), Some(b)) => (a.parse().unwrap_or(128), b.parse().unwrap_or(37)),
+            _ => (128u16, 37u16),
+        }
+    };
     let (rx, port) = receiver::spawn(0).expect("bind");
     beacon::spawn(port, Some("snapshot".into()), Vec::new());
 
