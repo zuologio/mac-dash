@@ -113,14 +113,20 @@ def draw(cp, width, height):
     return None
 
 
-def parse_table(blob, count):
-    """Decode a PSF unicode table into {codepoint: glyph index}."""
-    mapping, index, i, pending = {}, 0, 0, []
+def parse_table(blob, count, psf2):
+    """Decode a PSF unicode table into {codepoint: glyph index}.
+
+    The format is taken from the header, never guessed from the bytes: a PSF1
+    table is little-endian u16 terminated by 0xFFFF, and those terminators are
+    themselves full of 0xFF, so any content-based sniff misreads a perfectly
+    valid PSF1 table as UTF-8 and silently drops most of the font.
+    """
+    mapping, index = {}, 0
     if not blob:
         return mapping
-    # PSF2 tables are UTF-8 with 0xFF terminators; PSF1 tables are LE u16.
-    psf2 = b"\xff" in blob and blob.count(b"\xff\xff") < blob.count(b"\xff") / 2
+
     if psf2:
+        # UTF-8 runs; 0xFF ends a glyph's list, 0xFE separates sequences.
         for chunk in blob.split(b"\xff"):
             if index >= count:
                 break
@@ -132,6 +138,8 @@ def parse_table(blob, count):
                     pass
             index += 1
         return mapping
+
+    i, pending = 0, []
     while i + 1 < len(blob) and index < count:
         value = struct.unpack("<H", blob[i:i + 2])[0]
         if value == 0xFFFF:
@@ -139,7 +147,11 @@ def parse_table(blob, count):
                 mapping.setdefault(cp, index)
             pending = []
             index += 1
-        elif value != 0xFFFE:
+        elif value == 0xFFFE:
+            # Start of a multi-codepoint sequence; this tool maps single
+            # codepoints only, so skip to the end of this glyph's list.
+            pending = pending
+        else:
             pending.append(value)
         i += 2
     return mapping
@@ -153,14 +165,16 @@ def read(path):
         body = data[hdrsize:hdrsize + count * charsize]
         glyphs = [bytearray(body[i * charsize:(i + 1) * charsize]) for i in range(count)]
         table = data[hdrsize + count * charsize:] if flags & 1 else b""
-        return Font(True, flags, charsize, width, height, glyphs, parse_table(table, count))
+        return Font(True, flags, charsize, width, height, glyphs,
+                    parse_table(table, count, True))
 
     if data[:2] == PSF1_MAGIC:
         mode, charsize = data[2], data[3]
         count = 512 if mode & 1 else 256
         glyphs = [bytearray(data[4 + i * charsize:4 + (i + 1) * charsize]) for i in range(count)]
         table = data[4 + count * charsize:] if mode & 0x06 else b""
-        return Font(False, mode, charsize, 8, charsize, glyphs, parse_table(table, count))
+        return Font(False, mode, charsize, 8, charsize, glyphs,
+                    parse_table(table, count, False))
 
     raise SystemExit(f"{path}: not a PSF font")
 
