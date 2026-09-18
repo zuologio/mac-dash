@@ -52,6 +52,16 @@ pub struct StatsPacket {
     /// unaffected: one failing source must not take the stream down.
     #[serde(default)]
     pub temp: Option<Temp>,
+    /// Whether the Mac's *display* is asleep, as distinct from the Mac.
+    ///
+    /// A machine on AC power may be configured never to sleep, in which case
+    /// packet silence — the only sleep signal this protocol had — never
+    /// arrives. Display sleep is the event that means nobody is looking.
+    ///
+    /// `None` from an agent predating this field; the display then behaves
+    /// exactly as it did before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_asleep: Option<bool>,
     #[serde(default)]
     pub procs: Vec<Proc>,
 }
@@ -244,6 +254,7 @@ mod tests {
                 gpu: Some(99.9),
                 battery: Some(99.9),
             }),
+            display_asleep: Some(true),
             procs: (0..TOP_PROC_COUNT)
                 .map(|i| {
                     Proc::new(
@@ -334,6 +345,8 @@ mod tests {
                 gpu: Some(45.1),
                 battery: None,
             }),
+            // Awake: skip_serializing_if means the common case costs nothing.
+            display_asleep: Some(false),
             procs: vec![
                 Proc::new(842, "WindowServer", 8.2, 412_000_000),
                 Proc::new(1104, "Google Chrome", 6.4, 1_240_000_000),
