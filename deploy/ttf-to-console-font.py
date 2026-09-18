@@ -130,6 +130,21 @@ def build(path, size_px, out, cell=None):
         face.load_char("M", freetype.FT_LOAD_RENDER | freetype.FT_LOAD_TARGET_MONO)
         width = face.glyph.advance.x >> 6
         height = face.size.height >> 6
+
+    # fbcon pads every glyph row to a whole number of bytes, so a cell that is
+    # not a multiple of 8 wide is stored 16 bits wide and read back as though
+    # it were 16 wide: the glyphs come out sheared and the console silently
+    # keeps whatever font it had. Round up to the byte, which widens the cell
+    # by a few pixels of blank column rather than corrupting every glyph.
+    if width % 8:
+        width += 8 - width % 8
+
+    # The kernel refuses a glyph taller than 32 rows on most builds.
+    if height > 32:
+        raise SystemExit(
+            f"cell would be {height} rows tall; fbcon accepts at most 32. "
+            "Use a smaller --ttf-size."
+        )
     baseline = face.size.ascender >> 6
     if baseline <= 0 or baseline >= height:
         baseline = height - max(1, height // 6)
