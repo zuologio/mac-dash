@@ -37,15 +37,23 @@ use std::os::fd::AsRawFd;
 const KDFONTOP: u32 = 0x4B72;
 const KD_FONT_OP_SET: u32 = 0;
 
-/// The kernel takes glyph rows padded to a fixed 32 bytes each, whatever the
-/// font's real height — "vpitch fixed to 32" in kd.h. A font that ignores
-/// this loads as garbage.
+/// Rows of storage the kernel reserves per glyph, whatever the font's real
+/// height — "vpitch fixed to 32" in kd.h, a leftover from VGA hardware.
+///
+/// It is 32 **rows**, not 32 bytes per row: the buffer is
+/// `(width + 7) / 8 * VPITCH * charcount`, so each glyph occupies a fixed
+/// slot of `stride * 32` bytes and any rows beyond the font's height are
+/// left blank. Reading this as a per-row padding produces a buffer the
+/// kernel walks at the wrong stride, and the glyphs come out as one or two
+/// visible pixels each.
 const VPITCH: usize = 32;
 
-/// The console's own ceiling: 512 glyphs, and 64x128 pixels per glyph.
+/// The console's own ceilings. Height is bounded by `VPITCH`, not by the
+/// 128 rows `KD_FONT_OP_SET_TALL` allows: this uses the plain SET op, whose
+/// per-glyph slot is 32 rows, so a taller font has nowhere to go.
 const MAX_GLYPHS: u32 = 512;
 const MAX_WIDTH: u32 = 64;
-const MAX_HEIGHT: u32 = 128;
+const MAX_HEIGHT: u32 = VPITCH as u32;
 
 #[repr(C)]
 struct ConsoleFontOp {
@@ -109,13 +117,17 @@ pub fn parse(bytes: &[u8]) -> io::Result<Psf> {
         return Err(bad("font data truncated"));
     }
 
-    // Repack into the kernel's layout: every glyph row padded to VPITCH bytes.
-    let mut data = vec![0u8; count as usize * VPITCH * height as usize];
+    // Repack into the kernel's layout: each glyph gets a fixed slot of
+    // VPITCH rows, rows within it packed at the font's natural stride, and
+    // the unused rows below the glyph left blank.
+    let slot = stride * VPITCH;
+    let mut data = vec![0u8; count as usize * slot];
     for glyph in 0..count as usize {
         let src = body + glyph * charsize;
+        let dst = glyph * slot;
         for row in 0..height as usize {
             let from = src + row * stride;
-            let to = (glyph * height as usize + row) * VPITCH;
+            let to = dst + row * stride;
             data[to..to + stride].copy_from_slice(&bytes[from..from + stride]);
         }
     }
@@ -185,17 +197,38 @@ mod tests {
         assert_eq!((f.width, f.height, f.count), (8, 16, 256));
     }
 
-    /// The kernel wants each glyph row padded to 32 bytes whatever the cell
-    /// width. Getting this wrong loads a font of garbage.
+    /// Each glyph occupies a fixed slot of VPITCH *rows*, with rows packed
+    /// at the font's own stride inside it. This is the detail that decides
+    /// whether a font renders or turns into one visible pixel per character:
+    /// read as 32 bytes per row instead, the kernel walks the buffer at the
+    /// wrong stride and reads mostly padding.
     #[test]
-    fn repacks_rows_to_the_kernel_pitch() {
+    fn packs_each_glyph_into_a_32_row_slot() {
+        // 16 wide -> 2 bytes per row; 8 rows of content in a 32-row slot.
         let f = parse(&psf2(16, 8, 4)).expect("should parse");
-        assert_eq!(f.data.len(), 4 * 8 * VPITCH);
-        // Row 0 of glyph 0: two bytes of data, then padding.
-        assert_eq!(&f.data[0..2], &[0xFF, 0xFF]);
-        assert!(f.data[2..VPITCH].iter().all(|&b| b == 0), "not zero-padded");
-        // Row 1 starts exactly VPITCH bytes in, not 2.
-        assert_eq!(&f.data[VPITCH..VPITCH + 2], &[0xFF, 0xFF]);
+        let stride = 2;
+        let slot = stride * VPITCH;
+        assert_eq!(f.data.len(), 4 * slot, "buffer is stride * VPITCH * count");
+
+        // Rows sit at the font's stride, not at VPITCH.
+        assert_eq!(&f.data[0..2], &[0xFF, 0xFF], "row 0");
+        assert_eq!(&f.data[2..4], &[0xFF, 0xFF], "row 1 follows immediately");
+        // Rows past the font's height are blank, to the end of the slot.
+        assert!(
+            f.data[stride * 8..slot].iter().all(|&b| b == 0),
+            "unused rows in the slot must be blank"
+        );
+        // The next glyph starts one whole slot in.
+        assert_eq!(&f.data[slot..slot + 2], &[0xFF, 0xFF], "glyph 1 row 0");
+    }
+
+    /// The real font's buffer, sized exactly as the kernel computes it:
+    /// (width + 7) / 8 * VPITCH * charcount.
+    #[test]
+    fn buffer_matches_the_kernel_size_formula() {
+        let f = parse(&psf2(16, 31, 512)).expect("should parse");
+        let expected = 16usize.div_ceil(8) * VPITCH * 512;
+        assert_eq!(f.data.len(), expected);
     }
 
     #[test]
@@ -231,7 +264,9 @@ mod tests {
         assert!(parse(&psf2(8, 16, 0)).is_err(), "zero glyphs");
         assert!(parse(&psf2(8, 16, 1024)).is_err(), "too many glyphs");
         assert!(parse(&psf2(128, 16, 256)).is_err(), "too wide");
-        assert!(parse(&psf2(8, 256, 256)).is_err(), "too tall");
+        // Taller than the 32-row slot this op provides.
+        assert!(parse(&psf2(8, 33, 256)).is_err(), "too tall for VPITCH");
+        assert!(parse(&psf2(8, 256, 256)).is_err(), "absurdly tall");
     }
 
     /// The real patched font's shape, as make-console-font.py emits it.
@@ -239,7 +274,6 @@ mod tests {
     fn parses_the_shape_the_installer_ships() {
         let f = parse(&psf2(16, 31, 512)).expect("should parse");
         assert_eq!((f.width, f.height, f.count), (16, 31, 512));
-        assert_eq!(f.data.len(), 512 * 31 * VPITCH);
     }
 
     /// Loading from a path that does not exist must be an error, not a panic:
