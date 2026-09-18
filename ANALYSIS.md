@@ -112,9 +112,20 @@ Pi running the same binary — no configuration on the Mac.
 ### The tradeoff, stated plainly
 
 UDP caps a datagram at ~1400 bytes before IP fragmentation. All metrics plus
-five processes serialize to roughly 700 bytes, so it fits with room to spare —
-but it is a real ceiling. A future "top 30 processes" view would need a second
-packet type at a slower cadence, not a different transport.
+eight processes serialize to **1361 bytes in the worst case** — maximum-length
+host and process names, 24 cores, every optional field present. That is the
+real ceiling and it is close: a ninth process would cost ~80 bytes more and
+exceed it.
+
+A *typical* packet is only ~900 bytes, which makes the headroom look far
+larger than it is. The budget test measures the worst case deliberately: a
+packet that fits on an idle Mac and fragments under load is precisely the bug
+it exists to prevent. `process_count_is_at_the_budget_ceiling` holds the
+constant from the other side, failing if another process would still fit, so
+neither direction can drift unnoticed.
+
+A "top 30 processes" view would need a second packet type at a slower cadence,
+not a bigger packet.
 
 ---
 
@@ -236,11 +247,25 @@ Two changes, both following from the same observation: the dashboard displays
 | cpu, mem, net, uptime | 5 Hz | ~60 µs |
 | processes | 1 Hz | ~750 µs |
 | temperature (hardware) | 0.5 Hz | ~2200 µs |
+| display state (hardware) | 0.5 Hz | ~15-28 µs |
 
 **Measured: 0.012% of one core** — 7.4 ms of CPU per minute of wall clock, via
 `proc_pid_rusage`. Note that `ps` reports this as 0.5%: it accounts in 10 ms
 ticks and rounds a few milliseconds up to a whole one. Any measurement of a
 process this cheap needs nanosecond accounting to mean anything.
+
+### Display state pays the same toll
+
+`CGDisplayIsAsleep` costs 15-28 µs per call in this process — trivial beside
+the thermal read above, and not trivial against a budget of 7.4 ms per minute.
+At the 5 Hz packet rate it would add ~130 µs per second; on the 2-second tick
+it adds ~13 µs, an order of magnitude less.
+
+The reasoning is the same one that throttles temperature, and it is worth
+stating because the call *looks* free: a display that turned off two seconds
+ago is indistinguishable on screen from one that turned off now. The bench
+example prints both figures side by side so the decision stays visible to
+whoever reads the numbers next.
 
 ### The lesson
 
@@ -304,6 +329,10 @@ and no connection concept — just arithmetic on a timestamp:
 Any arriving packet resets to `Live` immediately. Flapping is impossible
 because receiving a packet is unambiguous and the asleep threshold is long.
 
+One state is *not* derived this way. `DisplayOff` comes from a flag the agent
+sends, because the thing it reports — the Mac's screen turning off while the
+Mac keeps running — produces no gap in the packet stream to measure. See §6.
+
 ---
 
 ## 6. Sleep detection and backlight control
@@ -311,11 +340,30 @@ because receiving a packet is unambiguous and the asleep threshold is long.
 **Requirement:** when the Mac sleeps, drive the 7" panel's backlight to 0;
 restore it when the Mac wakes.
 
-**This requires no protocol change.** The Pi already computes time since last
-packet for the staleness indicator. Sleep detection is the same clock against
-a longer threshold — a third arm on an `if` that already exists. The Mac stops
-transmitting the moment it suspends, and resumes within one 200 ms tick of
-waking, so the wake path is effectively instant.
+**System sleep requires no protocol change.** The Pi already computes time
+since last packet for the staleness indicator. Sleep detection is the same
+clock against a longer threshold — a third arm on an `if` that already exists.
+The Mac stops transmitting the moment it suspends, and resumes within one
+200 ms tick of waking, so the wake path is effectively instant.
+
+**Display sleep does, and the reason is worth recording.** A Mac on AC power
+is commonly configured never to sleep (`pmset -c sleep 0`), and then the
+silence this whole mechanism rests on never arrives: the screen goes dark, the
+user walks away, and the panel stays lit indefinitely. The event that actually
+means "nobody is looking" leaves no trace in the packet stream, so no amount of
+cleverness on the Pi can infer it. The agent reads `CGDisplayIsAsleep` and
+sends it.
+
+`DisplayOff` sits beside `Asleep` rather than replacing it, because the two
+differ in what they imply about the data on screen. `Asleep` means there is
+nothing left to show, so the last values are dimmed to mark them stale.
+`DisplayOff` means the data is still arriving and still correct — only nobody
+is there to see it — so the readings render normally and just the backlight
+goes out.
+
+Silence outranks the flag. Once packets stop, `display_asleep` is a stale claim
+about a Mac that can no longer be reached, so the elapsed-time states take over
+regardless of what the last packet said.
 
 Backlight control writes to the standard Linux sysfs interface:
 

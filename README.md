@@ -15,46 +15,46 @@ over your LAN. Point a small display at it and leave it running.
 </div>
 
 ```
- ● macAbre.local  up 16h 19m
-┌ CPU ───────────────────────────────────────────────────────────────┐┌ MEMORY ────────────────────────────────────────────────┐
-│ 36.0%  usr 19.5%  sys 16.5%                                        ││12.8G / 16.0G                                           │
-│████████████████████████▌···········································││████████████████████████████████████████████▉···········│
-│cores ▆▅▄▃▃▃▂▃▂▃                                                    ││pressure 65%  swap 6.4G                                 │
-│                                                                    │└────────────────────────────────────────────────────────┘
-│     ▁                                                              │┌ THERMAL ───────────────────────────────────────────────┐
-│██▇▆▇██▇▇▇█▇▇▇▁▆▆      ▃                                            ││ 58.3°C  SoC                                            │
-│█████████████████▇▇█████                                            ││ 32.0°C  batt                                           │
-│                                                                    ││                                                        │
-└────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────┘
-┌ TOP PROCESSES ─────────────────────────────────────────────────────┐┌ NETWORK ───────────────────────────────────────────────┐
-│pgAdmin 4 Helper (Render                               79.3%   425M ││▼ 4.9K/s   ▲ 4.9K/s                                     │
-│Google Chrome Helper                                   18.7%  84.3M ││   █ █                                                  │
-│Code Helper (Renderer)                                 16.9%   115M ││   █▇█                                                  │
-│Google Chrome Helper (Re                               16.8%   210M ││ █ ███     ██ █                                         │
-│com.apple.Virtualization                               10.7%   426M ││████████████████████████                                │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││██         █   ██                                       │
-│                                                                    ││████▇███████████████████                                │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-│                                                                    ││                                                        │
-└────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────┘
- LIVE en0 24 pkts  q quit
+ ● macAbre.local  up 1d 16h                                                                               08:12:56   Fri 18 Sep
+┌ CPU ───────────────────────────────────────────────────────────────────┐┌ MEMORY ────────────────────────────────────────────┐
+│  6.6%  usr 3.0%  sys 3.5%   load 3.66 4.21 3.87   10 cores             ││12.2G / 16.0G                                       │
+│████▊···································································││███████████████████████████████████████▉············│
+│cores ▂▂▁▁▁▁▂▂▁▁                                                        ││pressure 58%  compressed 6.3G  swap 11.9G / 13.0G   │
+│                                                                        ││                                                    │
+│                                                                        ││██████████████████████████                          │
+│                                                                        ││██████████████████████████                          │
+│                                                                        ││██████████████████████████                          │
+│                                                                        │└────────────────────────────────────────────────────┘
+│                                                                        │┌ THERMAL ───────────────────────────────────────────┐
+│                                                                        ││ 41.4°C  SoC                                        │
+│                                                                        ││ 32.0°C  batt                                       │
+│                                                                        ││                                                    │
+│                                                                        ││▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁                          │
+│                                                                        ││██████████████████████████                          │
+│                                                                        │└────────────────────────────────────────────────────┘
+│                                                                        │┌ NETWORK ───────────────────────────────────────────┐
+│▅                                                                       ││▼ 5.0K/s   ▲ 5.0K/s                                 │
+│█                                                                       ││█                                                   │
+│█       ▁                                                               ││█▂▂ ▆▆▄   ▂▂     ▄▄▂▂▄▄▂▂▂                          │
+│█     ▆ █            ▆▆                                                 ││█                                                   │
+│█▄▄ ▅▇█ █▁   ▁   ▇▇▁▁██▅▅▁                                              ││█▂  ▂      ▂ ▂▂  ▂▂▂▂▄▄▂▂▂                          │
+│███▄███▃██▄▇▆█▄▄▄█████████                                              ││session  ▼ 379M   ▲ 2.9G                            │
+└────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
+┌ TOP PROCESSES ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│Docker Desktop Helper (R    25.3%  92.8M  ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
+│claude                      14.9%   261M  ▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
+│opencode                     5.0%   161M  ▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
+│Code                         4.2%   107M  ▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
+│Code Helper                  3.8%  58.8M  ▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
+│com.apple.Virtualization     3.6%   406M  ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
+│com.docker.backend           2.6%   106M  ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
+│opencode                     2.1%   118M  ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
+│                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ LIVE en0 26 pkts  q quit
 ```
 
-<div align="center"><sub>Live output. The <code>yes</code> processes are load I generated to make the graphs interesting.</sub></div>
+<div align="center"><sub>Live output, unedited.</sub></div>
 
 ---
 
@@ -162,11 +162,17 @@ The dashboard already knows how long it has been since the last packet — that
 is what the staleness indicator is. Sleep detection is the same clock read
 against a longer threshold:
 
-| Silence | State | Screen |
+| Signal | State | Screen |
 |---|---|---|
-| < 1 s | `LIVE` | normal |
-| 1–10 s | `STALE` | values dimmed |
-| > 10 s | `ASLEEP` | **backlight off** |
+| packets flowing | `LIVE` | normal |
+| Mac's display asleep | `DISPLAY OFF` | **backlight off**, values current |
+| silence 1–10 s | `STALE` | values dimmed |
+| silence > 10 s | `ASLEEP` | **backlight off**, values dimmed |
+
+A Mac on AC power is often set never to sleep, in which case the silence this
+once relied on never arrives — the screen goes dark, you walk away, and the
+panel stays lit all evening. The agent reports its display state directly, so
+the panel follows the screen rather than the machine.
 
 Any arriving packet restores it, so waking the Mac lights the panel within one
 200 ms tick. It needed no protocol support at all.
@@ -186,10 +192,13 @@ screen on your desk, a dark panel is the right answer to both.
 
 ## What it shows
 
-**CPU** total and per-core, user/system split, load averages, 4 minutes of
-history · **Memory** used/total, macOS memory pressure, swap, compressed
-· **Network** up/down throughput on the interface that actually carries the
-traffic · **Thermal** SoC and battery temperature · **Processes** top 5 by CPU
+**CPU** total and per-core, user/system split, load averages against core
+count, 4 minutes of history · **Memory** used/total, macOS memory pressure,
+compressed, swap against its limit, with history · **Network** up/down
+throughput and session totals on the interface that actually carries the
+traffic · **Thermal** SoC and battery temperature with history
+· **Processes** top 8 by CPU · **Clock** taken from the Mac, because a Pi has
+no battery-backed clock of its own
 
 Temperature on Apple Silicon has no documented unprivileged interface —
 `powermetrics` wants root. macdash reads the same private `IOHIDEventSystemClient`
