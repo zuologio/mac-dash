@@ -170,10 +170,16 @@ Type=simple
 # level first: only genuine emergencies reach the panel. journalctl still
 # records everything.
 ExecStartPre=-/sbin/sysctl -q -w kernel.printk="1 4 1 3"
-# Load the patched font, without which every bar renders as '#'.
-ExecStartPre=-/bin/sh -c '[ -f /usr/local/share/consolefonts/macdash.psf ] && setfont /usr/local/share/consolefonts/macdash.psf -C /dev/tty1'
 ExecStartPre=/bin/sh -c 'clear >/dev/tty1 2>/dev/null || true'
 ExecStart=/usr/local/bin/macdash-tui ${ARGS}
+# The font loads *after* start, not before, and this is load-bearing:
+# TTYReset and TTYVHangup below reset tty1 "before and after execution"
+# (systemd.exec(5)), which discards any font an ExecStartPre had loaded. The
+# console then silently keeps whatever it had, with nothing logged.
+#
+# The sleep lets the TUI take the console first; setfont on a tty that is
+# mid-handover is what loses the font the second time.
+ExecStartPost=-/bin/sh -c 'sleep 2; [ -f /usr/local/share/consolefonts/macdash.psf ] && setfont /usr/local/share/consolefonts/macdash.psf -C /dev/tty1'
 Restart=always
 RestartSec=2
 
