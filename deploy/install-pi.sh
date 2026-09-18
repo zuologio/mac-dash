@@ -179,7 +179,12 @@ ExecStart=/usr/local/bin/macdash-tui ${ARGS}
 #
 # The sleep lets the TUI take the console first; setfont on a tty that is
 # mid-handover is what loses the font the second time.
-ExecStartPost=-/bin/sh -c 'sleep 2; [ -f /usr/local/share/consolefonts/macdash.psf ] && setfont /usr/local/share/consolefonts/macdash.psf -C /dev/tty1'
+# `&` matters: an ExecStartPost that sleeps keeps the unit in 'activating'
+# for its whole duration, and the installer's readiness check -- and anything
+# else asking systemd whether this started -- sees a service that has not
+# come up yet. Backgrounding it lets the unit reach 'active' immediately
+# while the font still lands a couple of seconds later.
+ExecStartPost=-/bin/sh -c '{ sleep 2; [ -f /usr/local/share/consolefonts/macdash.psf ] && setfont /usr/local/share/consolefonts/macdash.psf -C /dev/tty1; } &'
 Restart=always
 RestartSec=2
 
@@ -201,7 +206,15 @@ systemctl enable macdash
 systemctl restart macdash
 
 # Verify it actually came up before taking the console away from getty.
-sleep 3
+#
+# Poll rather than sleeping a fixed three seconds: a unit that is still
+# 'activating' is not a unit that failed, and treating it as one hands tty1
+# back to getty, which then fights the dashboard for the console forever.
+for _ in $(seq 1 15); do
+    systemctl is-active --quiet macdash && break
+    systemctl is-failed --quiet macdash && break
+    sleep 1
+done
 if systemctl is-active --quiet macdash; then
     # The dashboard owns tty1 now, so the login prompt must not also try.
     systemctl stop getty@tty1.service 2>/dev/null || true
