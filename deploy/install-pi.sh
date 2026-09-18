@@ -208,6 +208,20 @@ UNIT
 
 systemctl daemon-reload
 systemctl enable macdash
+
+# From here to the end of the file, tty1's ownership is in flux. If the script
+# dies in the middle -- a failed command under 'set -e', a dropped connection,
+# an expired sudo timestamp -- the console can be left with nothing attached:
+# no dashboard and no login prompt, which looks exactly like a dead screen and
+# gives no clue that anything is recoverable.
+#
+# So: whatever happens from now on, something owns tty1 when this exits.
+trap 'if ! systemctl is-active --quiet macdash; then
+          systemctl unmask getty@tty1.service 2>/dev/null || true
+          systemctl start getty@tty1.service 2>/dev/null || true
+          echo "Install did not finish; tty1 returned to a login prompt." >&2
+      fi' EXIT
+
 systemctl restart macdash
 
 # Verify it actually came up before taking the console away from getty.
