@@ -17,8 +17,8 @@ use macdash_proto::{
 };
 
 use collect::{
-    cpu::CpuCollector, mem::MemCollector, net::NetCollector, procs::ProcCollector,
-    temp::TempCollector,
+    cpu::CpuCollector, display::DisplayCollector, mem::MemCollector, net::NetCollector,
+    procs::ProcCollector, temp::TempCollector,
 };
 use discovery::TargetTable;
 use sender::Sender;
@@ -122,6 +122,7 @@ struct Collectors {
     net: NetCollector,
     temp: TempCollector,
     procs: ProcCollector,
+    display: DisplayCollector,
     host: String,
     /// Cached between the 1 Hz process passes (ANALYSIS.md §4).
     cached_procs: Vec<macdash_proto::Proc>,
@@ -135,6 +136,7 @@ impl Collectors {
             net: NetCollector::new(),
             temp: TempCollector::new(),
             procs: ProcCollector::new(),
+            display: DisplayCollector::new(),
             host: ffi::hostname(),
             cached_procs: Vec::new(),
         }
@@ -158,6 +160,7 @@ impl Collectors {
             mem: self.mem.sample(),
             net: self.net.sample(target, ts),
             temp: self.temp.sample(ts),
+            display_asleep: self.display.sample(ts),
             procs: self.cached_procs.clone(),
         }
     }

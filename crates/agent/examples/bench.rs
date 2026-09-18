@@ -10,8 +10,8 @@ mod ffi;
 use std::time::Instant;
 
 use collect::{
-    cpu::CpuCollector, mem::MemCollector, net::NetCollector, procs::ProcCollector,
-    temp::TempCollector,
+    cpu::CpuCollector, display::DisplayCollector, mem::MemCollector, net::NetCollector,
+    procs::ProcCollector, temp::TempCollector,
 };
 
 fn bench<F: FnMut()>(name: &str, iters: u32, mut f: F) -> f64 {
@@ -59,6 +59,18 @@ fn main() {
         temp.sample(tt);
     });
 
+    // Same treatment as temp: advance the clock past the cache interval so
+    // the hardware path is what gets timed.
+    let mut display = DisplayCollector::new();
+    let mut dt = 0u64;
+    let dp = bench("display (hardware)", 200, || {
+        dt += 10_000;
+        display.sample(dt);
+    });
+    let dc = bench("display (cached)", 500, || {
+        display.sample(dt);
+    });
+
     let mut procs = ProcCollector::new();
     let mut t2 = 0u64;
     let p = bench("procs", 20, || {
@@ -72,12 +84,16 @@ fn main() {
 
     // The agent's real duty cycle: 5 fast samples/s, 1 proc pass/s,
     // 1 hardware temp read per 2 s.
-    let fast = c + m + n + tc + up;
-    let per_sec = fast * 5.0 + p + tp / 2.0;
+    let fast = c + m + n + tc + dc + up;
+    let per_sec = fast * 5.0 + p + (tp + dp) / 2.0;
 
     println!("\n  fast group  x5/s:  {:>9.1} µs", fast * 5.0);
     println!("  procs       x1/s:  {p:>9.1} µs");
     println!("  temp      x0.5/s:  {:>9.1} µs", tp / 2.0);
+    println!("  display   x0.5/s:  {:>9.1} µs", dp / 2.0);
+    // The reason display is on the slow tick at all: at 5 Hz it would cost
+    // this much instead, against a whole-agent budget of ~120 µs/s.
+    println!("  (display at 5 Hz would be {:>7.1} µs/s)", dp * 5.0);
     println!("  ------------------------------");
     println!(
         "  per second:        {per_sec:>9.1} µs  ->  {:.3}% of one core",
@@ -110,6 +126,7 @@ fn main() {
             mem: mem.sample(),
             net: net.sample(Some(target), ts),
             temp: temp.sample(ts),
+            display_asleep: display.sample(ts),
             procs: cached.clone(),
         };
         let bytes = serde_json::to_vec(&pkt).unwrap();

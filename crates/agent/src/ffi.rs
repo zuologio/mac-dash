@@ -196,3 +196,13 @@ pub fn sysctl_scalar<T: Default + Copy>(name: &str) -> Option<T> {
     };
     (rc == 0).then_some(value)
 }
+
+// --- CoreGraphics: display power state -----------------------------------
+//
+// Public, documented and unprivileged, unlike the thermal sensors in
+// collect/temp.rs — this needs no quarantine behind a Result.
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    pub fn CGMainDisplayID() -> u32;
+    pub fn CGDisplayIsAsleep(display: u32) -> u32;
+}
