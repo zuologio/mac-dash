@@ -8,7 +8,13 @@ cd "$(dirname "$0")/.."
 
 HOST="${1:-}"
 if [[ -z "$HOST" ]]; then
-    echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>] [--zero2]"
+    echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>]"
+    echo "          [--font <console-font>] [--zero2]"
+    echo
+    echo "  --font   console font to patch and load, without the .psf.gz."
+    echo "           Default Lat15-Terminus32x16 (16x32 cells: 120x33 on a"
+    echo "           1080p panel, big enough to read from a desk away)."
+    echo "           Lat15-VGA16 gives the authentic IBM look at 240x67."
     echo "   e.g. $0 pi@192.168.0.148"
     exit 1
 fi
@@ -16,10 +22,16 @@ shift
 
 BACKLIGHT=""
 MAC_ADDR=""
+# Cell size decides the character grid, and the grid is what the layout is
+# tuned for: a 1080p panel at 16x32 is 120x33, close to the 128x37 the widgets
+# assume, while the same panel at 8x16 is 240x67 and leaves the dashboard
+# rattling around in a grid twice the size it was designed for.
+CONSOLE_FONT="Lat15-Terminus32x16"
 TARGET="arm-unknown-linux-musleabihf"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --backlight) BACKLIGHT="$2"; shift 2 ;;
+        --font)      CONSOLE_FONT="$2"; shift 2 ;;
         --mac)       MAC_ADDR="$2"; shift 2 ;;
         --zero2)     TARGET="armv7-unknown-linux-musleabihf"; shift ;;
         *) echo "unknown option: $1"; exit 1 ;;
@@ -79,7 +91,7 @@ rm -f /tmp/macdash-tui
 # So the glyphs are synthesized -- they are pure geometry -- and spliced into
 # a stock font over codepoints this display will never show.
 FONT_SRC=""
-for candidate in Uni2-Terminus24x12 Uni2-Terminus16 Lat15-Terminus16; do
+for candidate in ${CONSOLE_FONT} Lat15-Terminus32x16 Lat15-Terminus16 Lat15-VGA16; do
     if [ -f "/usr/share/consolefonts/\${candidate}.psf.gz" ]; then
         FONT_SRC="/usr/share/consolefonts/\${candidate}.psf.gz"
         break
