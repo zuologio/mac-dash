@@ -47,7 +47,10 @@ bandwidth and zero Mac CPU.
 
 New metrics requiring new collection (disk I/O, GPU load, battery charge,
 power draw). Scrolling or interactive process lists. Any change to the
-transport, discovery, or presence model.
+transport or discovery model.
+
+Display-sleep reporting (§4a) is in scope and does extend the presence model,
+added after the original draft.
 
 ---
 
@@ -184,7 +187,66 @@ displayed second advances correctly without interpolation.
 
 ---
 
-## 5. Testing
+## 4a. Display sleep
+
+**Added 2026-09-18 after investigating a report that the Mac "was asleep but
+data kept arriving".** It had not slept: `pmset` showed `sleep 0` on AC and an
+unbroken 1 d 13 h uptime with zero sleep events. What looked like sleep was
+*display* sleep (`displaysleep 10`). The dashboard was correct; the two
+machines were measuring different things.
+
+That exposes a real gap. The `ASLEEP` state and its backlight-off behaviour
+key on packet silence, which only happens on true system sleep. On a machine
+that is plugged in — the normal case for a desk — display sleep is the event
+that means "nobody is looking at this", and it produces no silence at all.
+
+**The agent reports display state explicitly.** `CGDisplayIsAsleep` is public,
+unprivileged CoreGraphics, verified working on this hardware (macOS 27,
+`CGDisplayConfiguration.h:288`).
+
+### Cost, and why it is not sampled at 5 Hz
+
+Measured on an M5: **8.5-10.3 µs per call**. Small in isolation, but the whole
+agent budget is 0.012% of a core, and calling this every tick would cost
+0.0042-0.0052% — around 35-40% of the existing budget for a value that changes
+a few times a day.
+
+```
+at 5 Hz            0.0051666% of one core
+every 2 s          0.0005167% of one core     <- 10x cheaper
+```
+
+**Sampled every 2 seconds**, reusing the existing tick-throttle pattern that
+`PROC_EVERY_N_TICKS` uses and for the same reason temperature is throttled
+(ANALYSIS.md §4): a display that turned off two seconds ago is
+indistinguishable on screen from one that turned off now.
+
+### Wire and presence changes
+
+`StatsPacket` gains one optional field:
+
+```json
+{"display_asleep": true}
+```
+
+`Option<bool>` and `skip_serializing_if`, so it costs ~24 bytes only when true
+and an older agent that omits it decodes fine. This is well inside the
+worst-case budget of §2 even at `TOP_PROC_COUNT = 8`.
+
+The TUI gains a presence state between `Live` and `Asleep`:
+
+| Condition | State | Screen |
+|---|---|---|
+| packets flowing, display on | `LIVE` | normal |
+| packets flowing, `display_asleep` | `DISPLAY OFF` | **backlight off**, values kept |
+| silence > 10 s | `ASLEEP` | **backlight off**, values dimmed |
+
+`DISPLAY OFF` is not a staleness state: data is still arriving and still
+correct, so values are rendered normally rather than dimmed — only the
+backlight goes out. Any packet with `display_asleep: false` restores it within
+one tick, so waking the Mac lights the panel as fast as waking from sleep does.
+
+When the field is absent (older agent), behaviour is exactly as today.
 
 Following the existing pattern in `crates/tui/tests/layout.rs`, which renders
 to `TestBackend` at every plausible size and asserts no panic and no overflow —
@@ -199,6 +261,11 @@ a layout panic on a headless Pi means a power cycle.
 | Clock formatting across epoch values | Correct date rollover |
 | Blank-cell ratio at 128×37 below a threshold | The density goal itself, as a regression guard |
 | Agent emits 8 processes | Collection honours the new count |
+| Presence with `display_asleep` true/false/absent | The new state, and that an older agent behaves as today |
+| Worst-case packet including `display_asleep` | §4a stays inside the §2 budget |
+
+Display state is read through a trait-style seam so the presence tests run
+without a Mac, matching how the rest of the logic tests are hardware-free.
 
 The blank-ratio test is the one that keeps this work from silently regressing;
 it asserts a ceiling (e.g. ≤60%) rather than an exact figure, so ordinary
@@ -208,15 +275,23 @@ layout tweaks do not make it brittle.
 
 ## 6. Work plan
 
-1. `proto`: `TOP_PROC_COUNT` 5 → 8; confirm the budget test still passes.
-2. `agent`: nothing — `procs.rs` already truncates to the constant.
+1. `proto`: `TOP_PROC_COUNT` 5 → 8; add `display_asleep`; extend
+   `PresenceTracker` with the `DisplayOff` state; confirm the budget test
+   still passes.
+2. `agent`: `CGDisplayIsAsleep` behind the existing `ffi` boundary, sampled on
+   the 2-second tick per §4a. `procs.rs` needs nothing — it already truncates
+   to the constant.
 3. `tui/state.rs`: add `mem_history` and `temp_history` rings.
 4. `tui/ui/widgets.rs`: extend CPU, MEMORY, THERMAL, NETWORK panels.
-5. `tui/ui/mod.rs`: re-proportion the layout per §3; add the header clock.
+5. `tui/ui/mod.rs`: re-proportion the layout per §3; add the header clock;
+   render the `DISPLAY OFF` state.
 6. `tui/ui/format.rs`: clock and date formatting from Unix ms.
-7. Tests per §5.
-8. Update README's sample frame and "What it shows"; update ANALYSIS.md §2 with
-   the measured worst-case ceiling.
+7. `tui/brightness.rs`: backlight follows the new state (no change expected —
+   it already keys on `wants_backlight()`).
+8. Tests per §5.
+9. Update README's sample frame, "What it shows", and the sleep-state table;
+   update ANALYSIS.md §2 with the measured worst-case ceiling and §4 with the
+   display-sleep sampling cost.
 
 ## 7. Risks
 
