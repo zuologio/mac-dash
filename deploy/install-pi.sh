@@ -158,10 +158,21 @@ systemctl unmask getty@tty1.service 2>/dev/null || true
 cat > /etc/systemd/system/macdash.service <<'UNIT'
 [Unit]
 Description=macdash display
-# Start only once boot has settled. Starting at network.target puts the
-# dashboard on tty1 while cloud-init and the rest of the boot sequence are
-# still writing to that same console, so their output scrawls over the UI.
-After=network-online.target cloud-init.target systemd-user-sessions.service
+# Start only once boot has settled: starting earlier puts the dashboard on
+# tty1 while the rest of the boot sequence is still writing to that same
+# console, and its output scrawls over the UI.
+#
+# Deliberately NOT After=cloud-init.target, however tempting. On Raspberry Pi
+# OS that target is itself ordered After=multi-user.target, and this unit is
+# WantedBy=multi-user.target -- so naming it forms an ordering cycle. systemd
+# breaks a cycle by deleting one job from it, and the job it picked was this
+# one: the dashboard silently never started, with getty already masked, so
+# tty1 had no owner at all and the panel went black. Nothing failed; the unit
+# simply showed 'inactive (dead)' with no attempt logged.
+#
+# getty.target is the honest way to say "after the console is ready", and it
+# does not depend on us.
+After=network-online.target getty.target systemd-user-sessions.service
 Wants=network-online.target
 
 [Service]
