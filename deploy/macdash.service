@@ -1,0 +1,22 @@
+[Unit]
+Description=macdash display
+# The timer queues this unit without holding up multi-user.target. cloud-final
+# itself runs after multi-user, so enabling this service there creates a cycle.
+After=multi-user.target cloud-final.service console-setup.service getty@tty1.service
+Wants=network-online.target
+After=network-online.target
+Conflicts=getty@tty1.service
+
+[Service]
+Type=exec
+ExecStartPre=/usr/local/bin/macdash-prepare-console
+ExecStart=/usr/local/bin/macdash-tui --font /usr/local/share/consolefonts/macdash.psf
+Restart=always
+RestartSec=2
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Environment=TERM=linux

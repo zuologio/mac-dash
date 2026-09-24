@@ -26,6 +26,10 @@ The cell defaults to the font's own advance and line height at that size.
 
 import struct
 import sys
+import runpy
+from pathlib import Path
+
+geometry = runpy.run_path(str(Path(__file__).with_name("make-console-font.py")))
 
 try:
     import freetype
@@ -42,12 +46,12 @@ DASHBOARD_GLYPHS = (
     + [0x250C, 0x2510, 0x2514, 0x2518, 0x251C, 0x2524, 0x252C, 0x2534, 0x253C]
     + list(range(0x2580, 0x2591))  # blocks, all eighths
     + [0x2591, 0x2592, 0x2593]  # shades
-    + [0x25B0, 0x25B1, 0x25B2, 0x25BC, 0x25CB, 0x25CD, 0x25CF, 0x25D0]
+    + [0x25B0, 0x25B1, 0x25B2, 0x25BC, 0x25CB, 0x25CC, 0x25CD, 0x25CF, 0x25D0]
     + [0x2022, 0x2026]  # bullet, ellipsis
 )
 
 # Synthesized rather than rasterized — see the module docstring.
-SYNTHETIC = set(range(0x2580, 0x2591)) | {0x25B0, 0x25B1}
+SYNTHETIC = set(geometry["NEEDED"])
 
 
 def synth(cp, width, height):
@@ -92,7 +96,7 @@ def synth(cp, width, height):
                 rows[y] = ((1 << hi) | (1 << lo)) & full
         return rows
 
-    return None
+    return geometry["draw"](cp, width, height)
 
 
 def rasterize(face, cp, width, height, baseline):

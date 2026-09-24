@@ -14,14 +14,18 @@ use socket2::{Domain, Protocol, Socket, Type};
 use macdash_proto::{Beacon, BEACON_GROUP, BEACON_INTERVAL_MS};
 
 /// Announce this display until the process exits.
-/// Announce this display until the process exits.
 ///
 /// `unicast_to` are addresses the beacon is additionally sent to directly.
 /// Many consumer access points drop multicast between wireless and wired
 /// clients — the frames leave the Pi and are silently discarded by the AP —
 /// which makes discovery impossible on an otherwise healthy network. Naming
 /// the Mac explicitly bypasses the group entirely.
-pub fn spawn(stats_port: u16, name: Option<String>, unicast_to: Vec<SocketAddr>) {
+pub fn spawn(
+    stats_port: u16,
+    name: Option<String>,
+    unicast_to: Vec<SocketAddr>,
+    agent: crate::receiver::AgentAddress,
+) {
     std::thread::spawn(move || {
         let group = SocketAddrV4::new(Ipv4Addr::from(BEACON_GROUP), macdash_proto::BEACON_PORT);
         let beacon = Beacon::new(stats_port, name);
@@ -87,7 +91,11 @@ pub fn spawn(stats_port: u16, name: Option<String>, unicast_to: Vec<SocketAddr>)
 
                 // Direct announcements, for networks where multicast does not
                 // survive the access point.
-                for dest in &unicast_to {
+                // DHCP may have changed the Mac's address since installation.
+                // Once stats arrive, keep discovery alive by replying directly
+                // to their source, even if multicast is intermittent.
+                let learned = *agent.lock().unwrap();
+                for dest in direct_targets(&unicast_to, learned) {
                     if sock.send_to(&payload, dest).is_ok() {
                         sent += 1;
                     }
@@ -107,6 +115,17 @@ pub fn spawn(stats_port: u16, name: Option<String>, unicast_to: Vec<SocketAddr>)
             std::thread::sleep(Duration::from_millis(BEACON_INTERVAL_MS));
         }
     });
+}
+
+fn direct_targets(configured: &[SocketAddr], learned: Option<std::net::IpAddr>) -> Vec<SocketAddr> {
+    let mut targets = configured.to_vec();
+    if let Some(ip) = learned {
+        let addr = SocketAddr::new(ip, macdash_proto::BEACON_PORT);
+        if !targets.contains(&addr) {
+            targets.push(addr);
+        }
+    }
+    targets
 }
 
 /// Tracks beacon health so that silence is visible instead of mysterious.
@@ -134,7 +153,7 @@ impl BeaconState {
     fn report(&mut self, sent: usize, ifaces: &[Ipv4Addr]) {
         let changed = !self.last_ifaces.is_empty() && self.last_ifaces != ifaces;
         if changed {
-            println!(
+            eprintln!(
                 "macdash: network changed ({:?} -> {:?}), re-announcing",
                 self.last_ifaces, ifaces
             );
@@ -156,14 +175,14 @@ impl BeaconState {
             self.announced = false;
         } else {
             if self.consecutive_failures > 0 {
-                println!(
+                eprintln!(
                     "macdash: beacon recovered after {} failed attempts",
                     self.consecutive_failures
                 );
                 self.consecutive_failures = 0;
             }
             if !self.announced {
-                println!("macdash: announcing on {sent} path(s): {ifaces:?}");
+                eprintln!("macdash: announcing on {sent} path(s): {ifaces:?}");
                 self.announced = true;
             }
         }
@@ -217,6 +236,21 @@ fn multicast_interfaces() -> Vec<Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replies_to_current_agent_even_with_stale_install_address() {
+        let old = "192.168.0.3:9998".parse().unwrap();
+        let current: SocketAddr = "192.168.0.17:9998".parse().unwrap();
+        assert_eq!(
+            direct_targets(&[old], Some(current.ip())),
+            vec![old, current]
+        );
+        assert_eq!(
+            direct_targets(&[current], Some(current.ip())),
+            vec![current]
+        );
+        assert_eq!(direct_targets(&[], None), vec![]);
+    }
 
     fn ip(s: &str) -> Ipv4Addr {
         s.parse().unwrap()

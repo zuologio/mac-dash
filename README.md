@@ -131,6 +131,22 @@ cargo run --release -p macdash-agent      # on the Mac
 cargo run --release -p macdash-tui        # anywhere on the same LAN
 ```
 
+The installer preserves an existing custom console font unless you pass
+`--font` or `--ttf`. Font bitmaps and their Unicode map are loaded together
+before the first frame. Diagnostics go to the journal, not to the dashboard.
+
+At boot, `macdash.timer` queues the service after `multi-user.target`,
+`cloud-final.service` and console setup have finished. The timer avoids an
+ordering cycle with cloud-init. Restart the display with
+`sudo systemctl restart macdash`; inspect both units with
+`systemctl status macdash macdash.timer`.
+
+The display learns the agent's current address from incoming stats and sends
+beacons directly there as well as to multicast and any configured `--mac`
+address. This keeps a stale DHCP address in the installer configuration from
+interrupting an established stream. The Pi setup also disables Wi-Fi power
+saving for its active wireless connection without reconnecting it.
+
 ## Watching over SSH
 
 The dashboard is just a terminal program, so it runs in an SSH session as

@@ -16,6 +16,7 @@ if [[ -z "$HOST" ]]; then
     echo "           BigBlueTerminal). Needs freetype-py on this machine."
     echo "  --ttf-size  pixel size for --ttf (default 24)."
     echo "  --font   console font to patch and load, without the .psf.gz."
+    echo "           Keeps the installed typeface on updates unless specified."
     echo "           Default Lat15-Terminus32x16 (16x32 cells: 120x33 on a"
     echo "           1080p panel, big enough to read from a desk away)."
     echo "           Lat15-VGA16 gives the authentic IBM look at 240x67."
@@ -31,6 +32,7 @@ MAC_ADDR=""
 # assume, while the same panel at 8x16 is 240x67 and leaves the dashboard
 # rattling around in a grid twice the size it was designed for.
 CONSOLE_FONT="Lat15-Terminus32x16"
+KEEP_FONT=1
 # A .ttf/.otf to rasterize instead, for a font the distro does not ship.
 TTF_FONT=""
 TTF_SIZE="24"
@@ -38,7 +40,7 @@ TARGET="arm-unknown-linux-musleabihf"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --backlight) BACKLIGHT="$2"; shift 2 ;;
-        --font)      CONSOLE_FONT="$2"; shift 2 ;;
+        --font)      CONSOLE_FONT="$2"; KEEP_FONT=0; shift 2 ;;
         --ttf)       TTF_FONT="$2"; shift 2 ;;
         --ttf-size)  TTF_SIZE="$2"; shift 2 ;;
         --mac)       MAC_ADDR="$2"; shift 2 ;;
@@ -64,11 +66,8 @@ if [[ ! -f "$BIN" ]]; then
 fi
 
 ARGS="--name $(hostname -s 2>/dev/null || echo display)"
-# The dashboard loads the console font itself. Doing it from the service file
-# failed silently three different ways -- systemd resets the tty around
-# ExecStartPre/Post and the console keeps whatever font it had, with nothing
-# logged. By the time the binary runs it owns the console, so nothing can
-# reset it afterwards.
+# The dashboard loads the bitmap and Unicode map after it owns the tty,
+# before sizing its buffers for the font's character grid.
 ARGS="$ARGS --font /usr/local/share/consolefonts/macdash.psf"
 [[ -n "$BACKLIGHT" ]] && ARGS="$ARGS --backlight $BACKLIGHT"
 [[ -n "$MAC_ADDR" ]] && ARGS="$ARGS --mac $MAC_ADDR"
@@ -87,7 +86,8 @@ echo "Installing to ${HOST}"
 STAGE="$(mktemp -d -t macdash)"
 trap 'rm -rf "$STAGE"' EXIT
 cp "$BIN" "$STAGE/macdash-tui"
-cp "$(dirname "$0")/make-console-font.py" "$STAGE/macdash-mkfont.py"
+cp deploy/make-console-font.py "$STAGE/macdash-mkfont.py"
+cp deploy/macdash.service deploy/macdash.timer deploy/prepare-pi-console.sh "$STAGE/"
 
 # A .ttf has to be rasterized to a bitmap before the console can use it, and
 # that needs freetype -- which is on this machine, not necessarily on a Pi
@@ -98,7 +98,7 @@ if [[ -n "$TTF_FONT" ]]; then
         exit 1
     fi
     echo "Rasterizing $(basename "$TTF_FONT") at ${TTF_SIZE}px…"
-    if ! python3 "$(dirname "$0")/ttf-to-console-font.py" \
+    if ! python3 deploy/ttf-to-console-font.py \
             "$TTF_FONT" "$TTF_SIZE" "$STAGE/macdash-font.psf"; then
         echo "Could not rasterize it; install freetype-py or drop --ttf."
         exit 1
@@ -112,7 +112,14 @@ fi
 cat > "$STAGE/macdash-install.sh" <<REMOTE
 set -euo pipefail
 
-systemctl stop macdash 2>/dev/null || true
+trap 'if ! systemctl is-active --quiet macdash; then
+          systemctl stop macdash.service macdash.timer 2>/dev/null || true
+          systemctl unmask getty@tty1.service 2>/dev/null || true
+          systemctl start getty@tty1.service 2>/dev/null || true
+          echo "Install did not finish; tty1 returned to a login prompt." >&2
+      fi' EXIT
+
+systemctl stop macdash.timer macdash.service 2>/dev/null || true
 install -m 755 /tmp/macdash-tui /usr/local/bin/macdash-tui
 rm -f /tmp/macdash-tui
 
@@ -132,6 +139,11 @@ if [ -f /tmp/macdash-font.psf ]; then
     install -m 644 /tmp/macdash-font.psf /usr/local/share/consolefonts/macdash.psf
     rm -f /tmp/macdash-font.psf /tmp/macdash-mkfont.py
     echo "  console font: rasterized from the supplied .ttf"
+elif [ "${KEEP_FONT}" = 1 ] && [ -s /usr/local/share/consolefonts/macdash.psf ]; then
+    echo "  preserving the installed typeface and repairing missing symbols"
+    python3 /tmp/macdash-mkfont.py /usr/local/share/consolefonts/macdash.psf \
+        /usr/local/share/consolefonts/macdash.psf
+    rm -f /tmp/macdash-mkfont.py
 else
 FONT_SRC=""
 for candidate in ${CONSOLE_FONT} Lat15-Terminus32x16 Lat15-Terminus16 Lat15-VGA16; do
@@ -140,15 +152,14 @@ for candidate in ${CONSOLE_FONT} Lat15-Terminus32x16 Lat15-Terminus16 Lat15-VGA1
         break
     fi
 done
-if [ -n "\$FONT_SRC" ] && command -v python3 >/dev/null; then
-    mkdir -p /usr/local/share/consolefonts
-    if python3 /tmp/macdash-mkfont.py "\$FONT_SRC" \
-            /usr/local/share/consolefonts/macdash.psf; then
-        echo "  console font built from \$(basename "\$FONT_SRC")"
-    else
-        echo "  WARNING: could not build the console font; bars will show as '#'"
-    fi
+if [ -z "\$FONT_SRC" ] || ! command -v python3 >/dev/null; then
+    echo "Cannot build the required console font: install console fonts and python3." >&2
+    exit 1
 fi
+mkdir -p /usr/local/share/consolefonts
+python3 /tmp/macdash-mkfont.py "\$FONT_SRC" \
+    /usr/local/share/consolefonts/macdash.psf
+echo "  console font built from \$(basename "\$FONT_SRC")"
 rm -f /tmp/macdash-mkfont.py
 fi
 
@@ -161,69 +172,23 @@ fi
 # So: unmask it now, and mask it again only after the service starts cleanly.
 systemctl unmask getty@tty1.service 2>/dev/null || true
 
-cat > /etc/systemd/system/macdash.service <<'UNIT'
-[Unit]
-Description=macdash display
-# Start only once boot has settled: starting earlier puts the dashboard on
-# tty1 while the rest of the boot sequence is still writing to that same
-# console, and its output scrawls over the UI.
-#
-# Deliberately NOT After=cloud-init.target, however tempting. On Raspberry Pi
-# OS that target is itself ordered After=multi-user.target, and this unit is
-# WantedBy=multi-user.target -- so naming it forms an ordering cycle. systemd
-# breaks a cycle by deleting one job from it, and the job it picked was this
-# one: the dashboard silently never started, with getty already masked, so
-# tty1 had no owner at all and the panel went black. Nothing failed; the unit
-# simply showed 'inactive (dead)' with no attempt logged.
-#
-# getty.target is the honest way to say "after the console is ready", and it
-# does not depend on us.
-After=network-online.target getty.target systemd-user-sessions.service
-Wants=network-online.target
-
+install -m 755 /tmp/prepare-pi-console.sh /usr/local/bin/macdash-prepare-console
+install -m 644 /tmp/macdash.service /etc/systemd/system/macdash.service
+install -m 644 /tmp/macdash.timer /etc/systemd/system/macdash.timer
+mkdir -p /etc/systemd/system/macdash.service.d
+cat > /etc/systemd/system/macdash.service.d/display.conf <<'UNIT'
 [Service]
-Type=simple
-# Blank the console before drawing, so late boot output does not sit under
-# the UI. The TUI also repaints fully every few seconds as a backstop.
-# The kernel logs to tty1 too (console=tty1 on the Pi's cmdline), and it does
-# so whenever it likes -- WiFi power-save messages land minutes after boot, on
-# top of the UI. A one-shot clear cannot fix that, so raise the console log
-# level first: only genuine emergencies reach the panel. journalctl still
-# records everything.
-ExecStartPre=-/sbin/sysctl -q -w kernel.printk="1 4 1 3"
-ExecStartPre=/bin/sh -c 'clear >/dev/tty1 2>/dev/null || true'
+ExecStart=
 ExecStart=/usr/local/bin/macdash-tui ${ARGS}
-Restart=always
-RestartSec=2
-
-# Render to the first virtual console so the dashboard appears on the
-# attached screen with no keyboard and no login.
-StandardInput=tty
-StandardOutput=tty
-TTYPath=/dev/tty1
-TTYReset=yes
-TTYVHangup=yes
-Environment=TERM=linux
-
-[Install]
-WantedBy=multi-user.target
 UNIT
+rm -f /tmp/macdash.service /tmp/macdash.timer /tmp/prepare-pi-console.sh
+
+# A timer starts the display after the boot jobs settle, without making
+# multi-user.target wait for a unit ordered after cloud-final.service.
+systemctl disable macdash.service 2>/dev/null || true
 
 systemctl daemon-reload
-systemctl enable macdash
-
-# From here to the end of the file, tty1's ownership is in flux. If the script
-# dies in the middle -- a failed command under 'set -e', a dropped connection,
-# an expired sudo timestamp -- the console can be left with nothing attached:
-# no dashboard and no login prompt, which looks exactly like a dead screen and
-# gives no clue that anything is recoverable.
-#
-# So: whatever happens from now on, something owns tty1 when this exits.
-trap 'if ! systemctl is-active --quiet macdash; then
-          systemctl unmask getty@tty1.service 2>/dev/null || true
-          systemctl start getty@tty1.service 2>/dev/null || true
-          echo "Install did not finish; tty1 returned to a login prompt." >&2
-      fi' EXIT
+systemctl enable macdash.timer
 
 systemctl restart macdash
 
@@ -239,14 +204,17 @@ while [ \$tries -lt 15 ]; do
     tries=\$((tries + 1))
     sleep 1
 done
+sleep 2
 if systemctl is-active --quiet macdash; then
     # The dashboard owns tty1 now, so the login prompt must not also try.
     systemctl stop getty@tty1.service 2>/dev/null || true
     systemctl mask getty@tty1.service 2>/dev/null || true
+    systemctl start macdash.timer
     echo "macdash is running; tty1 handed over to the dashboard."
 else
     # Leave getty enabled so the screen still shows a usable login rather
     # than nothing at all, and say what went wrong.
+    systemctl stop macdash.service macdash.timer 2>/dev/null || true
     systemctl unmask getty@tty1.service 2>/dev/null || true
     systemctl start getty@tty1.service 2>/dev/null || true
     echo "macdash FAILED to start — tty1 left with a login prompt." >&2
@@ -269,7 +237,8 @@ if ! sh -n "$STAGE/macdash-install.sh"; then
     exit 1
 fi
 
-SCP_FILES=("$STAGE/macdash-tui" "$STAGE/macdash-install.sh" "$STAGE/macdash-mkfont.py")
+SCP_FILES=("$STAGE/macdash-tui" "$STAGE/macdash-install.sh" "$STAGE/macdash-mkfont.py"
+           "$STAGE/macdash.service" "$STAGE/macdash.timer" "$STAGE/prepare-pi-console.sh")
 [[ -f "$STAGE/macdash-font.psf" ]] && SCP_FILES+=("$STAGE/macdash-font.psf")
 scp -q "${SCP_FILES[@]}" "${HOST}:/tmp/"
 

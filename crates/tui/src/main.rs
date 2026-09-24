@@ -16,7 +16,7 @@ mod ui;
 
 use std::io;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -75,7 +75,8 @@ fn parse_args() -> Result<Args, String> {
                 } else {
                     format!("{v}:{}", macdash_proto::BEACON_PORT)
                 };
-                args.macs.push(with_port.parse().map_err(|_| format!("bad address: {v}"))?);
+                args.macs
+                    .push(with_port.parse().map_err(|_| format!("bad address: {v}"))?);
             }
             "-h" | "--help" => {
                 print_help();
@@ -120,10 +121,8 @@ KEYS:
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 fn main() {
@@ -161,7 +160,7 @@ fn main() {
     };
 
     if !args.no_beacon {
-        beacon::spawn(port, args.name.clone(), args.macs.clone());
+        beacon::spawn(port, args.name.clone(), args.macs.clone(), rx.agent.clone());
     }
 
     let mut backlight = MaybeBacklight::new(args.backlight.as_deref());
@@ -189,22 +188,14 @@ fn main() {
 }
 
 fn run(
-    rx: std::sync::mpsc::Receiver<macdash_proto::StatsPacket>,
+    rx: receiver::LatestPacket,
     backlight: &mut MaybeBacklight,
     font: Option<&str>,
 ) -> io::Result<()> {
-    let mut terminal = setup_terminal()?;
-
-    // Load the console font here rather than from the service file. systemd
-    // resets the tty around ExecStartPre/Post (TTYReset, TTYVHangup), which
-    // silently discards a font loaded there -- the console keeps whatever it
-    // had and nothing is logged. By this point we own the console, so nothing
-    // is going to reset it out from under us.
-    //
-    // Never fatal: ugly bars beat no dashboard, and over SSH this cannot work
-    // at all (no console to set), which is entirely normal.
+    // Loading a font can resize the character grid. Do it before creating
+    // ratatui's buffers, and use our own tty so an SSH session cannot alter tty1.
     if let Some(path) = font {
-        match console_font::load(path, "/dev/tty1") {
+        match console_font::load(path, "/dev/tty") {
             Ok(f) => eprintln!(
                 "macdash: console font loaded ({}x{}, {} glyphs)",
                 f.width, f.height, f.count
@@ -212,20 +203,16 @@ fn run(
             Err(e) => eprintln!("macdash: could not load {path}: {e}"),
         }
     }
+    let mut terminal = setup_terminal()?;
     let mut dash = Dashboard::new();
     let mut last_frame = Instant::now();
     let mut repainter = repaint::Repainter::new();
 
     let result = loop {
-        // Drain every pending packet, keeping only the newest. If a redraw
-        // ever runs long, this prevents replaying a backlog of stale frames.
-        let mut got = 0;
-        while let Ok(pkt) = rx.try_recv() {
-            dash.ingest(pkt, now_ms());
-            got += 1;
-            if got > 32 {
-                break;
-            }
+        // The receiver keeps only the newest snapshot, timestamped when it
+        // arrived. A slow draw must neither replay a backlog nor call it live.
+        if let Some((pkt, arrived_ms)) = rx.take() {
+            dash.ingest(pkt, arrived_ms);
         }
 
         let now = now_ms();
@@ -287,8 +274,16 @@ fn run(
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
+    if std::env::var("TERM").as_deref() == Ok("linux") {
+        // The console must decode the UTF-8 characters used by the font map.
+        use std::io::Write;
+        stdout.write_all(b"\x1b%G")?;
+    }
     execute!(stdout, EnterAlternateScreen, crossterm::cursor::Hide)?;
-    Terminal::new(CrosstermBackend::new(stdout))
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+    terminal.clear()?;
+    repaint::invalidate(&mut terminal);
+    Ok(terminal)
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {

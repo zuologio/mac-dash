@@ -260,3 +260,24 @@ fn invalidate_writes_nothing_by_itself() {
         "invalidate must not emit bytes; the repaint belongs to the next draw"
     );
 }
+
+/// Corrupt the physical screen after a frame; repaint must overwrite even
+/// default spaces, including the empty waiting screen before the first packet.
+#[test]
+fn repaint_removes_external_text_from_blank_cells() {
+    use ratatui::backend::{Backend, TestBackend};
+    use ratatui::buffer::Cell;
+    for dash in [Dashboard::new(), populated()] {
+        let mut term = Terminal::new(TestBackend::new(128, 37)).unwrap();
+        term.draw(|f| ui::render(f, &dash, 40_000)).unwrap();
+        let expected = term.backend().buffer().clone();
+        let mut dirty = Cell::default();
+        dirty.set_symbol("#");
+        let dirty = &dirty;
+        let cells = (0..37).flat_map(|y| (0..128).map(move |x| (x, y, dirty)));
+        term.backend_mut().draw(cells).unwrap();
+        repaint::invalidate(&mut term);
+        term.draw(|f| ui::render(f, &dash, 40_000)).unwrap();
+        assert_eq!(term.backend().buffer(), &expected);
+    }
+}

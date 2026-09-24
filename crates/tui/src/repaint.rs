@@ -51,7 +51,7 @@ impl Repainter {
     ///
     /// Call immediately before `draw()`. Does not write to the terminal
     /// itself: it only discards ratatui's record of what is on screen, so the
-    /// diff in the following `draw()` comes out empty-to-full.
+    /// diff in the following `draw()` includes every cell.
     pub fn maybe_invalidate<B: Backend>(&mut self, terminal: &mut Terminal<B>) {
         if self.last.elapsed() < self.interval {
             return;
@@ -64,15 +64,16 @@ impl Repainter {
 /// Discard ratatui's belief about what the screen currently shows.
 ///
 /// `draw()` diffs the buffer just rendered against the *other* one, so
-/// resetting that one makes every cell differ. No escape sequence is emitted
+/// invalidating that one makes every cell differ. No escape sequence is emitted
 /// here, which is the whole point: the repaint happens inside the next
 /// `draw()`, as one uninterrupted write.
 pub fn invalidate<B: Backend>(terminal: &mut Terminal<B>) {
-    // `swap_buffers` resets the inactive buffer and swaps. Doing it twice
-    // resets both and leaves `current` where it started, so the next `draw()`
-    // renders into the buffer it would have used anyway and diffs it against
-    // an empty one.
-    terminal.swap_buffers();
+    // Poison the previous frame with a zero-width sentinel, then swap it
+    // into the comparison slot. Resetting to spaces is insufficient: blank
+    // cells would compare equal and leave boot messages on the real screen.
+    for cell in &mut terminal.current_buffer_mut().content {
+        cell.set_symbol("\0");
+    }
     terminal.swap_buffers();
 }
 

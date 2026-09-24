@@ -33,7 +33,7 @@ PSF1_MAGIC = b"\x36\x04"
 PSF2_MAGIC = b"\x72\xb5\x4a\x86"
 
 # What the dashboard needs and no font has.
-NEEDED = list(range(0x2580, 0x2591)) + [0x25B0, 0x25B1]
+NEEDED = list(range(0x2580, 0x2591)) + [0x25B0, 0x25B1, 0x25CB, 0x25CC, 0x25CD, 0x25CF, 0x25D0, 0x2026]
 
 
 class Font:
@@ -110,6 +110,25 @@ def draw(cp, width, height):
                     rows[y] = ((1 << hi) | (1 << lo)) & full
         return rows
 
+    if cp in (0x25CB, 0x25CC, 0x25CD, 0x25CF, 0x25D0):
+        radius = max(1, min(width, height) / 2 - 1)
+        inner = max(0, radius - max(1, width / 8))
+        for y in range(height):
+            for x in range(width):
+                dx, dy = x - (width - 1) / 2, y - (height - 1) / 2
+                distance = dx * dx + dy * dy
+                ring = inner * inner <= distance <= radius * radius
+                fill = cp == 0x25CF or (cp == 0x25D0 and dx <= 0) or (cp == 0x25CD and x % 2 == 0)
+                if distance <= radius * radius and (fill or (ring and (cp != 0x25CC or (x + y) % 3 != 0))):
+                    rows[y] |= 1 << (width - 1 - x)
+        return rows
+
+    if cp == 0x2026:  # ellipsis, including the waiting screen
+        for x in (width // 4, width // 2, width * 3 // 4):
+            for y in range(height * 3 // 4, min(height, height * 3 // 4 + max(1, height // 16))):
+                rows[y] |= 1 << (width - 1 - x)
+        return rows
+
     return None
 
 
@@ -130,7 +149,7 @@ def parse_table(blob, count, psf2):
         for chunk in blob.split(b"\xff"):
             if index >= count:
                 break
-            for part in chunk.split(b"\xfe"):
+            for part in chunk.split(b"\xfe")[:1]:
                 try:
                     for ch in part.decode("utf-8"):
                         mapping.setdefault(ord(ch), index)
@@ -139,26 +158,29 @@ def parse_table(blob, count, psf2):
             index += 1
         return mapping
 
-    i, pending = 0, []
+    i, pending, sequence = 0, [], False
     while i + 1 < len(blob) and index < count:
         value = struct.unpack("<H", blob[i:i + 2])[0]
         if value == 0xFFFF:
             for cp in pending:
                 mapping.setdefault(cp, index)
             pending = []
+            sequence = False
             index += 1
         elif value == 0xFFFE:
             # Start of a multi-codepoint sequence; this tool maps single
             # codepoints only, so skip to the end of this glyph's list.
-            pending = pending
-        else:
+            sequence = True
+        elif not sequence:
             pending.append(value)
         i += 2
     return mapping
 
 
 def read(path):
-    data = gzip.open(path, "rb").read() if path.endswith(".gz") else open(path, "rb").read()
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rb") as handle:
+        data = handle.read()
 
     if data[:4] == PSF2_MAGIC:
         _, hdrsize, flags, count, charsize, height, width = struct.unpack("<7I", data[4:32])
@@ -194,6 +216,8 @@ def reclaimable(cp):
     accents and non-Latin scripts filling most of a Uni2 font are dead weight
     on a panel that will only ever show English hostnames and numbers.
     """
+    if cp in NEEDED:
+        return False
     if cp < 0x0100:  # ASCII and Latin-1
         return False
     if 0x2500 <= cp <= 0x25FF:  # box drawing and geometric shapes
@@ -234,8 +258,8 @@ def build(src, out):
     reverse = by_glyph(font.mapping)
     free = [
         index
-        for index in sorted(reverse, reverse=True)
-        if reverse[index] and all(reclaimable(cp) for cp in reverse[index])
+        for index in reversed(range(len(font.glyphs)))
+        if not reverse.get(index) or all(reclaimable(cp) for cp in reverse[index])
     ]
     freed = set(free)
     font.mapping = {cp: i for cp, i in font.mapping.items() if i not in freed}
@@ -251,8 +275,7 @@ def build(src, out):
             index = free.pop(0)
             font.mapping[cp] = index
         else:
-            print(f"  no slot left for U+{cp:04X}", file=sys.stderr)
-            continue
+            raise SystemExit(f"no font slot left for required glyph U+{cp:04X}")
         glyph = bytearray(font.charsize)
         rows_avail = font.charsize // max(1, font.stride)
         for y in range(min(font.height, rows_avail)):

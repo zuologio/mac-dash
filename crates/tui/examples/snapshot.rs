@@ -14,7 +14,7 @@ mod state;
 #[path = "../src/ui/mod.rs"]
 mod ui;
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -22,10 +22,8 @@ use ratatui::Terminal;
 use state::Dashboard;
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 fn main() {
@@ -37,16 +35,17 @@ fn main() {
         }
     };
     let (rx, port) = receiver::spawn(0).expect("bind");
-    beacon::spawn(port, Some("snapshot".into()), Vec::new());
+    beacon::spawn(port, Some("snapshot".into()), Vec::new(), rx.agent.clone());
 
     eprintln!("listening on :{port}, collecting for 4s…");
 
     let mut dash = Dashboard::new();
     let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
-        if let Ok(p) = rx.recv_timeout(Duration::from_millis(250)) {
-            dash.ingest(p, now_ms());
+        if let Some((p, arrived_ms)) = rx.take() {
+            dash.ingest(p, arrived_ms);
         }
+        std::thread::sleep(Duration::from_millis(50));
     }
 
     if dash.latest.is_none() {

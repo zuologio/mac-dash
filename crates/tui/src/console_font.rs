@@ -6,23 +6,9 @@
 //! wears a row of `#`. The fix is a patched font, and the problem is getting
 //! it loaded and *keeping* it loaded.
 //!
-//! Doing that from the service file failed in three different ways, all of
-//! them silent:
-//!
-//!   * `ExecStartPre` runs before systemd's `TTYReset`/`TTYVHangup`, which
-//!     reset the terminal and discard the font.
-//!   * `ExecStartPost` runs after, but racing the handover leaves it
-//!     unreliable, and a version that slept held the unit in `activating`
-//!     long enough for the installer to conclude it had failed.
-//!   * Either way the console keeps whatever font it had rather than
-//!     erroring, so nothing appears in the journal to say what happened.
-//!
-//! Loading it here removes the race entirely: by the time this runs we own
-//! the console, and nothing else is going to reset it out from under us.
-//!
-//! Failure is never fatal. A dashboard with ugly bars is worth far more than
-//! no dashboard, so every path returns `Result` and the caller logs and
-//! carries on.
+//! A font consists of bitmaps AND a Unicode-to-glyph table. Loading only
+//! bitmaps leaves the old console mapping active, so new bar glyphs still
+//! render as fallback characters. Install both before sizing the terminal.
 
 use std::fs;
 use std::io;
@@ -36,6 +22,21 @@ use std::os::fd::AsRawFd;
 /// the Pi's musl target.
 const KDFONTOP: u32 = 0x4B72;
 const KD_FONT_OP_SET: u32 = 0;
+const PIO_UNIMAPCLR: u32 = 0x4B68;
+const PIO_UNIMAP: u32 = 0x4B67;
+
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq)]
+struct UniPair {
+    unicode: u16,
+    fontpos: u16,
+}
+
+#[repr(C)]
+struct UniMap {
+    count: u16,
+    entries: *const UniPair,
+}
 
 /// Rows of storage the kernel reserves per glyph, whatever the font's real
 /// height — "vpitch fixed to 32" in kd.h, a leftover from VGA hardware.
@@ -70,26 +71,39 @@ pub struct Psf {
     pub width: u32,
     pub height: u32,
     pub count: u32,
-    /// Glyph bitmaps, already padded to the kernel's 32-byte row pitch.
+    /// Glyph bitmaps, already padded to the kernel's 32-row glyph slots.
     data: Vec<u8>,
+    mapping: Vec<UniPair>,
 }
 
 /// Parse a PSF1 or PSF2 font.
 ///
-/// Only the bitmaps are read. The unicode table is deliberately ignored: the
-/// kernel's own mapping is left alone, and the patched fonts this loads are
-/// built so that glyph *positions* match what the console already expects.
+/// Parse both the bitmaps and the Unicode aliases. Multi-codepoint sequences
+/// cannot be represented by the console unimap and are skipped.
 pub fn parse(bytes: &[u8]) -> io::Result<Psf> {
     let bad = |m: &str| io::Error::new(io::ErrorKind::InvalidData, m.to_string());
 
-    let (width, height, count, charsize, body) = if bytes.starts_with(&[0x72, 0xb5, 0x4a, 0x86]) {
+    let (width, height, count, charsize, body, unicode, psf2) = if bytes
+        .starts_with(&[0x72, 0xb5, 0x4a, 0x86])
+    {
         if bytes.len() < 32 {
             return Err(bad("PSF2 header truncated"));
         }
         let u32_at = |o: usize| u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
         let (headersize, count, charsize) = (u32_at(8) as usize, u32_at(16), u32_at(20) as usize);
         let (height, width) = (u32_at(24), u32_at(28));
-        (width, height, count, charsize, headersize)
+        if u32_at(4) != 0 || headersize < 32 {
+            return Err(bad("invalid PSF2 header"));
+        }
+        (
+            width,
+            height,
+            count,
+            charsize,
+            headersize,
+            u32_at(12) & 1 != 0,
+            true,
+        )
     } else if bytes.starts_with(&[0x36, 0x04]) {
         if bytes.len() < 4 {
             return Err(bad("PSF1 header truncated"));
@@ -97,7 +111,15 @@ pub fn parse(bytes: &[u8]) -> io::Result<Psf> {
         let charsize = bytes[3] as usize;
         let count = if bytes[2] & 1 != 0 { 512 } else { 256 };
         // PSF1 is always 8 pixels wide, one byte per row.
-        (8, charsize as u32, count, charsize, 4)
+        (
+            8,
+            charsize as u32,
+            count,
+            charsize,
+            4,
+            bytes[2] & 6 != 0,
+            false,
+        )
     } else {
         return Err(bad("not a PSF font"));
     };
@@ -112,10 +134,21 @@ pub fn parse(bytes: &[u8]) -> io::Result<Psf> {
     if charsize < stride * height as usize {
         return Err(bad("charsize too small for the stated cell"));
     }
-    let needed = body + count as usize * charsize;
+    let needed = (count as usize)
+        .checked_mul(charsize)
+        .and_then(|n| body.checked_add(n))
+        .ok_or_else(|| bad("font size overflow"))?;
     if bytes.len() < needed {
         return Err(bad("font data truncated"));
     }
+
+    let mapping = if unicode {
+        parse_mapping(&bytes[needed..], count, psf2)?
+    } else {
+        return Err(bad(
+            "font has no Unicode mapping; use a patched macdash font",
+        ));
+    };
 
     // Repack into the kernel's layout: each glyph gets a fixed slot of
     // VPITCH rows, rows within it packed at the font's natural stride, and
@@ -137,7 +170,42 @@ pub fn parse(bytes: &[u8]) -> io::Result<Psf> {
         height,
         count,
         data,
+        mapping,
     })
+}
+
+fn parse_mapping(mut bytes: &[u8], count: u32, psf2: bool) -> io::Result<Vec<UniPair>> {
+    let bad = || io::Error::new(io::ErrorKind::InvalidData, "invalid PSF Unicode table");
+    let mut mapping = Vec::new();
+    for fontpos in 0..count as u16 {
+        if psf2 {
+            let end = bytes.iter().position(|&b| b == 0xff).ok_or_else(bad)?;
+            let aliases = bytes[..end].split(|&b| b == 0xfe).next().unwrap();
+            for ch in std::str::from_utf8(aliases).map_err(|_| bad())?.chars() {
+                if let Ok(unicode) = u16::try_from(ch as u32) {
+                    mapping.push(UniPair { unicode, fontpos });
+                }
+            }
+            bytes = &bytes[end + 1..];
+        } else {
+            let mut sequence = false;
+            loop {
+                let pair = bytes.get(..2).ok_or_else(bad)?;
+                let unicode = u16::from_le_bytes([pair[0], pair[1]]);
+                bytes = &bytes[2..];
+                match unicode {
+                    0xffff => break,
+                    0xfffe => sequence = true,
+                    _ if !sequence => mapping.push(UniPair { unicode, fontpos }),
+                    _ => {}
+                }
+            }
+        }
+    }
+    if mapping.is_empty() || mapping.len() > u16::MAX as usize {
+        return Err(bad());
+    }
+    Ok(mapping)
 }
 
 /// Load a PSF font file onto the console.
@@ -161,7 +229,7 @@ pub fn load(path: &str, tty: &str) -> io::Result<Psf> {
 
     // SAFETY: `op` is a well-formed console_font_op, and `data` points at a
     // buffer this function owns for the duration of the call, sized exactly
-    // as the kernel expects (charcount * height * VPITCH).
+    // as the kernel expects (charcount * stride * VPITCH).
     let rc = unsafe {
         libc::ioctl(
             file.as_raw_fd(),
@@ -170,6 +238,18 @@ pub fn load(path: &str, tty: &str) -> io::Result<Psf> {
         )
     };
     if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: these repr(C) structures match linux/kd.h; all pointed-to
+    // storage remains alive throughout each synchronous ioctl.
+    let init = [0u16; 3];
+    let map = UniMap {
+        count: font.mapping.len() as u16,
+        entries: font.mapping.as_ptr(),
+    };
+    if unsafe { libc::ioctl(file.as_raw_fd(), PIO_UNIMAPCLR as _, init.as_ptr()) } < 0
+        || unsafe { libc::ioctl(file.as_raw_fd(), PIO_UNIMAP as _, &map as *const UniMap) } < 0
+    {
         return Err(io::Error::last_os_error());
     }
     Ok(font)
@@ -188,6 +268,10 @@ mod tests {
             v.extend_from_slice(&value.to_le_bytes());
         }
         v.extend(std::iter::repeat_n(0xFF, count as usize * charsize));
+        for i in 0..count {
+            v.extend_from_slice(char::from_u32(32 + i).unwrap().to_string().as_bytes());
+            v.push(0xff);
+        }
         v
     }
 
@@ -233,16 +317,24 @@ mod tests {
 
     #[test]
     fn parses_a_psf1_font() {
-        let mut v = vec![0x36, 0x04, 0x00, 16];
+        let mut v = vec![0x36, 0x04, 0x02, 16];
         v.extend(std::iter::repeat_n(0xAA, 256 * 16));
+        for i in 0..256u16 {
+            v.extend_from_slice(&i.to_le_bytes());
+            v.extend_from_slice(&[0xff, 0xff]);
+        }
         let f = parse(&v).expect("should parse");
         assert_eq!((f.width, f.height, f.count), (8, 16, 256));
     }
 
     #[test]
     fn psf1_mode_bit_selects_512_glyphs() {
-        let mut v = vec![0x36, 0x04, 0x01, 16];
+        let mut v = vec![0x36, 0x04, 0x03, 16];
         v.extend(std::iter::repeat_n(0, 512 * 16));
+        for i in 0..512u16 {
+            v.extend_from_slice(&i.to_le_bytes());
+            v.extend_from_slice(&[0xff, 0xff]);
+        }
         assert_eq!(parse(&v).expect("should parse").count, 512);
     }
 
@@ -274,6 +366,69 @@ mod tests {
     fn parses_the_shape_the_installer_ships() {
         let f = parse(&psf2(16, 31, 512)).expect("should parse");
         assert_eq!((f.width, f.height, f.count), (16, 31, 512));
+    }
+
+    #[test]
+    fn psf2_maps_bar_codepoints_to_their_actual_slots() {
+        let mut bytes = psf2(8, 16, 3);
+        bytes.truncate(32 + 3 * 16);
+        // Arbitrary slots, unlike either ASCII positions or the stock map.
+        bytes.extend_from_slice(" ▏".as_bytes());
+        bytes.push(0xff);
+        bytes.extend_from_slice("▁▰".as_bytes());
+        bytes.push(0xff);
+        bytes.extend_from_slice("▱".as_bytes());
+        // A sequence must not remap the ordinary letters f and i.
+        bytes.extend_from_slice(b"\xfefi\xff");
+        let font = parse(&bytes).unwrap();
+        for (unicode, fontpos) in [(' ', 0), ('▏', 0), ('▁', 1), ('▰', 1), ('▱', 2)] {
+            assert!(font.mapping.contains(&UniPair {
+                unicode: unicode as u16,
+                fontpos
+            }));
+        }
+        assert_eq!(font.mapping.len(), 5);
+    }
+
+    #[test]
+    fn psf1_maps_aliases_but_skips_sequences() {
+        let table = [
+            0x2581u16, 0x2582, 0xfffe, 0x66, 0x69, 0xffff, 0x25b0, 0xffff,
+        ];
+        let bytes: Vec<u8> = table.iter().flat_map(|n| n.to_le_bytes()).collect();
+        assert_eq!(
+            parse_mapping(&bytes, 2, false).unwrap(),
+            vec![
+                UniPair {
+                    unicode: 0x2581,
+                    fontpos: 0
+                },
+                UniPair {
+                    unicode: 0x2582,
+                    fontpos: 0
+                },
+                UniPair {
+                    unicode: 0x25b0,
+                    fontpos: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_truncated_mapping_and_invalid_offsets() {
+        let mut bytes = psf2(8, 16, 256);
+        bytes.pop();
+        assert!(parse(&bytes).is_err());
+        let mut bytes = psf2(8, 16, 256);
+        bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
+        assert!(parse(&bytes).is_err());
+        let mut bytes = psf2(8, 16, 256);
+        bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
+        assert!(parse(&bytes).is_err());
+        bytes[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+        bytes[20..24].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse(&bytes).is_err());
     }
 
     /// Loading from a path that does not exist must be an error, not a panic:

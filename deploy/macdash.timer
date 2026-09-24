@@ -1,0 +1,10 @@
+[Unit]
+Description=Start macdash once boot has settled
+
+[Timer]
+OnBootSec=1s
+Unit=macdash.service
+RemainAfterElapse=yes
+
+[Install]
+WantedBy=timers.target
