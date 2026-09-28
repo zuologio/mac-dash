@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 
 use macdash_proto::{Presence, PresenceTracker, StatsPacket};
 
-/// Samples retained for the sparklines: at 5 Hz, about 4 minutes.
+/// Samples retained for the sparklines: at 5 Hz, about 24 seconds.
 pub const HISTORY: usize = 120;
 
 pub struct Dashboard {
@@ -23,9 +23,6 @@ pub struct Dashboard {
     pub mem_history: Ring,
     pub temp_history: Ring,
     pub packets_received: u64,
-    /// Peak network rate seen, used to scale the sparkline. Without a running
-    /// peak the graph rescales on every sample and the shape is unreadable.
-    pub net_peak: u64,
 }
 
 impl Dashboard {
@@ -39,7 +36,6 @@ impl Dashboard {
             mem_history: Ring::new(HISTORY),
             temp_history: Ring::new(HISTORY),
             packets_received: 0,
-            net_peak: 1,
         }
     }
 
@@ -59,17 +55,15 @@ impl Dashboard {
         if let Some(net) = &packet.net {
             if let Some(rx) = net.rx_bps {
                 self.rx_history.push(rx);
-                self.net_peak = self.net_peak.max(rx);
             }
             if let Some(tx) = net.tx_bps {
                 self.tx_history.push(tx);
-                self.net_peak = self.net_peak.max(tx);
             }
         }
 
         if packet.mem.total > 0 {
-            let pct = packet.mem.used as f64 / packet.mem.total as f64 * 100.0;
-            self.mem_history.push(pct as u64);
+            // Bytes preserve small changes that whole percentages erase.
+            self.mem_history.push(packet.mem.used);
         }
 
         // Temperature is the one metric allowed to be absent (private API,
@@ -217,15 +211,15 @@ mod tests {
     }
 
     #[test]
-    fn net_peak_is_monotonic_for_stable_scaling() {
+    fn network_history_forgets_old_bursts() {
         let mut d = Dashboard::new();
         d.ingest(packet(Some(1.0), Some(5_000)), 0);
         d.ingest(packet(Some(1.0), Some(500_000)), 200);
         d.ingest(packet(Some(1.0), Some(1_000)), 400);
-        assert_eq!(
-            d.net_peak, 500_000,
-            "peak must not shrink, or the graph rescales constantly"
-        );
+        for i in 0..HISTORY {
+            d.ingest(packet(Some(1.0), Some(1_000)), 600 + i as u64 * 200);
+        }
+        assert_eq!(d.rx_history.max(), 1_000);
     }
 
     #[test]
@@ -249,8 +243,20 @@ mod tests {
             battery: None,
         });
         d.ingest(p, 0);
-        assert_eq!(d.mem_history.last(), Some(50), "50% of total");
+        assert_eq!(d.mem_history.last(), Some(8_589_934_592));
         assert_eq!(d.temp_history.last(), Some(44));
+    }
+
+    #[test]
+    fn memory_history_preserves_changes_smaller_than_one_percent() {
+        let mut d = Dashboard::new();
+        let mut p = packet(Some(1.0), None);
+        p.mem.total = 16 << 30;
+        p.mem.used = 11 << 30;
+        d.ingest(p.clone(), 0);
+        p.mem.used += 16 << 20;
+        d.ingest(p.clone(), 200);
+        assert_eq!(d.mem_history.tail(2), vec![11 << 30, p.mem.used]);
     }
 
     /// Temperature may be absent. A null must not punch a false zero into

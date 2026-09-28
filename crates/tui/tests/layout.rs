@@ -100,6 +100,113 @@ fn renders_on_the_target_panel() {
     assert!(out.contains("TOP PROCESSES"));
     assert!(out.contains("NETWORK"));
     assert!(out.contains("LIVE"));
+    assert!(out.contains("CPU TOTAL"));
+}
+
+#[test]
+fn process_and_cpu_panels_share_the_same_divider() {
+    for (width, height) in [(128, 37), (120, 40), (80, 24)] {
+        let out = render_at(width, height, &populated(), 40_000);
+        let cpu = out.lines().find(|l| l.starts_with("┌ CPU ")).unwrap();
+        let procs = out
+            .lines()
+            .find(|l| l.starts_with("┌ TOP PROCESSES "))
+            .unwrap();
+        assert_eq!(
+            cpu.chars().position(|c| c == '┐'),
+            procs.chars().position(|c| c == '┐')
+        );
+        assert!(procs.contains("CPU TOTAL"));
+    }
+}
+
+fn cpu_tile(out: &str) -> String {
+    let lines: Vec<_> = out.lines().collect();
+    let start = lines.iter().position(|l| l.contains("CPU TOTAL")).unwrap();
+    let column = lines[start]
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '┌')
+        .map(|(i, _)| i)
+        .last()
+        .unwrap();
+    lines[start + 1..lines.len() - 1]
+        .iter()
+        .map(|line| line.chars().skip(column).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn large_cpu_uses_machine_total_not_the_listed_process_sum() {
+    let mut dash = Dashboard::new();
+    let mut p = sample_packet();
+    dash.ingest(p.clone(), 0);
+    let original = cpu_tile(&render_at(128, 37, &dash, 0));
+    assert!(original.matches('█').count() > 50, "large digits missing");
+    p.procs = vec![Proc::new(1, "busy", 999.0, 0)];
+    dash.ingest(p.clone(), 200);
+    assert_eq!(original, cpu_tile(&render_at(128, 37, &dash, 200)));
+    for total in [Some(0.0), Some(100.0), None] {
+        p.cpu.total = total;
+        dash.ingest(p.clone(), 400);
+        let tile = cpu_tile(&render_at(128, 37, &dash, 400));
+        assert_ne!(original, tile);
+        assert!(tile.contains('█'));
+    }
+}
+
+#[test]
+fn modest_network_traffic_is_visible_after_an_old_download_burst() {
+    let mut dash = Dashboard::new();
+    let mut p = sample_packet();
+    p.net.as_mut().unwrap().rx_bps = Some(50_000_000);
+    dash.ingest(p.clone(), 0);
+    p.net.as_mut().unwrap().rx_bps = Some(50_000); // 400 kbit/s
+    p.net.as_mut().unwrap().tx_bps = Some(10_000);
+    for i in 1..100 {
+        dash.ingest(p.clone(), i * 200);
+    }
+    let out = render_at(128, 37, &dash, 19_800);
+    assert!(out.contains("scale 0..64.0K/s"), "old peak still dominates");
+    let network: Vec<_> = out
+        .lines()
+        .skip_while(|l| !l.contains("scale 0.."))
+        .skip(1)
+        .take(4)
+        .map(|l| l.chars().skip(75).collect::<String>())
+        .collect();
+    assert!(network[0].chars().any(|c| ('▁'..='█').contains(&c)));
+    assert!(network[1].contains('█'));
+    assert!(
+        network[3].chars().any(|c| ('▁'..='█').contains(&c)),
+        "upload history missing"
+    );
+    assert!(out.contains("session"), "graphs overwrite totals");
+
+    // A new burst must raise the scale immediately.
+    p.net.as_mut().unwrap().rx_bps = Some(50_000_000);
+    dash.ingest(p, 20_000);
+    assert!(render_at(128, 37, &dash, 20_000).contains("scale 0..64.0M/s"));
+}
+
+#[test]
+fn steady_memory_draws_a_labeled_outline_instead_of_a_solid_area() {
+    let dash = populated();
+    let out = render_at(128, 37, &dash, 40_000);
+    assert!(out.contains("used trend"));
+    let lines: Vec<_> = out
+        .lines()
+        .skip_while(|l| !l.contains("used trend"))
+        .skip(1)
+        .take(3)
+        .map(|l| l.chars().skip(75).collect::<String>())
+        .collect();
+    assert!(lines.iter().any(|l| l.contains('─')));
+    assert!(
+        lines.iter().all(|l| !l.contains('█')),
+        "RAM trend is still a filled area"
+    );
 }
 
 /// Every size from a phone-sized SSH window to a large terminal.
@@ -339,7 +446,8 @@ fn cpu_headline_does_not_shift_as_values_change() {
     }
     for (i, w) in widths.iter().enumerate().skip(1) {
         assert_eq!(
-            *w, widths[0],
+            *w,
+            widths[0],
             "field positions moved between samples:\n  {}\n  {}",
             texts[0].trim_end(),
             texts[i].trim_end()

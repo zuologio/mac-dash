@@ -4,6 +4,7 @@
 //! readable in an SSH window today and on a 1024x600 panel (~128x37
 //! characters) later, without a rewrite in between.
 
+mod big_digits;
 pub mod format;
 pub mod theme;
 mod widgets;
@@ -191,7 +192,7 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Percentage(38),
-            Constraint::Percentage(28),
+            Constraint::Percentage(25),
             Constraint::Min(3),
         ])
         .split(top[1]);
@@ -200,7 +201,13 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
     widgets::net_panel(f, right[2], dash, dimmed);
 
     if show_procs && rows[1].height > 0 {
-        widgets::proc_panel(f, rows[1], dash, dimmed);
+        // Use the same column widths above and below the horizontal divider.
+        let bottom = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(top[0].width), Constraint::Min(0)])
+            .split(rows[1]);
+        widgets::proc_panel(f, bottom[0], dash, dimmed);
+        widgets::cpu_total_panel(f, bottom[1], dash, dimmed);
     }
 }
 

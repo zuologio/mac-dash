@@ -1,12 +1,12 @@
 //! The individual panels.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Sparkline, Table};
 use ratatui::Frame;
 
-use super::{format, theme};
+use super::{big_digits, format, theme};
 use crate::state::Dashboard;
 
 fn panel(title: &str, dimmed: bool) -> Block<'_> {
@@ -134,11 +134,7 @@ pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
 
     if split[1].height > 0 && !dash.cpu_history.is_empty() {
         let data = dash.cpu_history.tail(split[1].width as usize);
-        // Deliberately *not* height-capped the way the network graphs are.
-        // Their scale is relative to the running peak, so stretching them
-        // turns a 2 KB/s wiggle into a cliff. This one is pinned to 0-100%,
-        // an absolute scale, where extra rows buy real resolution and cannot
-        // exaggerate anything.
+        // CPU keeps an absolute 0-100% scale; extra rows buy resolution.
         f.render_widget(
             Sparkline::default()
                 .data(&data)
@@ -247,14 +243,90 @@ pub fn mem_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
 
     if rows[3].height > 0 && !dash.mem_history.is_empty() {
         let data = dash.mem_history.tail(rows[3].width as usize);
+        memory_trend(f, rows[3], &data, dimmed);
+    }
+}
+
+/// Outline history of RAM used, with explicit bounds and at least 256 MiB
+/// of vertical range. The meter above still shows absolute occupancy.
+fn memory_trend(f: &mut Frame, area: Rect, data: &[u64], dimmed: bool) {
+    if area.is_empty() || data.is_empty() {
+        return;
+    }
+    let min = *data.iter().min().unwrap();
+    let max = *data.iter().max().unwrap();
+    let padding = (max.saturating_sub(min) / 4).max(128 * 1024 * 1024);
+    let low = min.saturating_sub(padding);
+    let high = max.saturating_add(padding).max(low.saturating_add(1));
+    f.render_widget(
+        Paragraph::new(format!(
+            "used trend {}..{}",
+            format::bytes(low),
+            format::bytes(high)
+        ))
+        .style(fg(dimmed, theme::DIM)),
+        Rect { height: 1, ..area },
+    );
+    if area.height < 2 {
+        return;
+    }
+    let height = area.height - 1;
+    let mut previous = None;
+    for (x, value) in data.iter().take(area.width as usize).enumerate() {
+        let offset =
+            ((*value - low) as u128 * (height - 1) as u128 / (high - low).max(1) as u128) as u16;
+        let y = area.bottom() - 1 - offset;
+        if let Some(prev) = previous {
+            for between in (y.min(prev) + 1)..y.max(prev) {
+                f.buffer_mut()[(area.x + x as u16, between)]
+                    .set_symbol("│")
+                    .set_style(fg(dimmed, theme::OK));
+            }
+        }
+        f.buffer_mut()[(area.x + x as u16, y)]
+            .set_symbol("─")
+            .set_style(fg(dimmed, theme::OK));
+        previous = Some(y);
+    }
+}
+
+pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
+    let block = panel("CPU TOTAL", dimmed);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let Some(pkt) = &dash.latest else { return };
+    if inner.is_empty() {
+        return;
+    }
+    let total = pkt
+        .cpu
+        .total
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(0.0, 100.0));
+    let text = format::pct(total);
+    let style = fg(dimmed, total.map(theme::scale).unwrap_or(theme::DIM));
+    let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).split(inner);
+    if !big_digits::render(f, rows[0], &text, style) {
         f.render_widget(
-            Sparkline::default()
-                .data(&data)
-                .max(100)
-                .style(fg(dimmed, theme::OK)),
-            rows[3],
+            Paragraph::new(text)
+                .alignment(Alignment::Center)
+                .style(style),
+            rows[0],
         );
     }
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(format!("of total capacity / {} cores", pkt.cpu.ncpu)),
+            Line::from(format!(
+                "usr {}  sys {}",
+                format::pct(pkt.cpu.user),
+                format::pct(pkt.cpu.sys)
+            )),
+        ])
+        .alignment(Alignment::Center)
+        .style(fg(dimmed, theme::DIM)),
+        rows[1],
+    );
 }
 
 pub fn temp_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
@@ -364,56 +436,87 @@ pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
         rows[0],
     );
 
-    if rows[1].height >= 2 && !dash.rx_history.is_empty() {
-        // Cap each graph's height: a sparkline stretched over 20 rows turns a
-        // 2 KB/s fluctuation into a dramatic-looking cliff. Four rows is
-        // enough to read the shape, and the rest stays empty.
-        let gh = (rows[1].height / 2).min(4).max(1);
-        let graphs = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(gh),
-                Constraint::Length(gh),
-                Constraint::Min(0),
-            ])
-            .split(rows[1]);
-
-        // Both graphs share one scale so their relative heights are
-        // meaningful — independent scaling would make 1 KB/s of upload look
-        // like 1 MB/s of download.
-        let scale = dash.net_peak.max(1);
-        for (idx, (ring, color)) in [(&dash.rx_history, theme::RX), (&dash.tx_history, theme::TX)]
-            .iter()
+    // Reserve scale and totals before laying out the graphs, so text cannot
+    // overwrite the upload history on the 7-inch display.
+    let details = Layout::vertical([
+        Constraint::Length(u16::from(rows[1].height >= 3)),
+        Constraint::Min(0),
+        Constraint::Length(u16::from(rows[1].height >= 4)),
+    ])
+    .split(rows[1]);
+    let width = inner.width.saturating_sub(2) as usize;
+    let rx = dash.rx_history.tail(width);
+    let tx = dash.tx_history.tail(width);
+    let scale = network_scale(&rx, &tx);
+    f.render_widget(
+        Paragraph::new(format!("scale 0..{}/s", format::bytes(scale)))
+            .style(fg(dimmed, theme::DIM)),
+        details[0],
+    );
+    if details[1].height >= 2 {
+        let height = details[1].height / 2;
+        let graphs = Layout::vertical([
+            Constraint::Length(height),
+            Constraint::Length(height),
+            Constraint::Min(0),
+        ])
+        .split(details[1]);
+        for (idx, (data, label, color)) in [(&rx, "▼", theme::RX), (&tx, "▲", theme::TX)]
+            .into_iter()
             .enumerate()
         {
-            let data = ring.tail(graphs[idx].width as usize);
+            let graph = graphs[idx];
+            f.render_widget(
+                Paragraph::new(label).style(fg(dimmed, color)),
+                Rect {
+                    width: graph.width.min(1),
+                    ..graph
+                },
+            );
+            let inset = graph.width.min(2);
+            // Normalize with wide arithmetic so even extreme counters cannot
+            // overflow the sparkline's value * height multiplication.
+            let normalized: Vec<u64> = data
+                .iter()
+                .map(|v| (*v as u128 * 1024 / scale as u128) as u64)
+                .collect();
             f.render_widget(
                 Sparkline::default()
-                    .data(&data)
-                    .max(scale)
-                    .style(fg(dimmed, *color)),
-                graphs[idx],
-            );
-        }
-
-        // Session totals on the bottom row, in the space the capped graphs
-        // deliberately leave empty.
-        if rows[1].height >= 4 {
-            let mut total_row = rows[1];
-            total_row.y += rows[1].height - 1;
-            total_row.height = 1;
-            f.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled("session  ", fg(dimmed, theme::DIM)),
-                    Span::styled("▼ ", fg(dimmed, theme::RX)),
-                    Span::styled(format::bytes(net.rx_total), fg(dimmed, theme::DIM)),
-                    Span::styled("   ▲ ", fg(dimmed, theme::TX)),
-                    Span::styled(format::bytes(net.tx_total), fg(dimmed, theme::DIM)),
-                ])),
-                total_row,
+                    .data(&normalized)
+                    .max(1024)
+                    .style(fg(dimmed, color)),
+                Rect {
+                    x: graph.x + inset,
+                    width: graph.width - inset,
+                    ..graph
+                },
             );
         }
     }
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("session  ", fg(dimmed, theme::DIM)),
+            Span::styled("▼ ", fg(dimmed, theme::RX)),
+            Span::styled(format::bytes(net.rx_total), fg(dimmed, theme::DIM)),
+            Span::styled("   ▲ ", fg(dimmed, theme::TX)),
+            Span::styled(format::bytes(net.tx_total), fg(dimmed, theme::DIM)),
+        ])),
+        details[2],
+    );
+}
+
+/// One shared scale for the visible download/upload window. Binary steps
+/// avoid continuous scale jitter, and an old burst stops dominating as soon
+/// as it leaves the graph. A 1 KiB/s floor keeps idle noise in perspective.
+fn network_scale(rx: &[u64], tx: &[u64]) -> u64 {
+    rx.iter()
+        .chain(tx)
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .max(1024)
+        .checked_next_power_of_two()
+        .unwrap_or(u64::MAX)
 }
 
 pub fn proc_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
@@ -476,4 +579,3 @@ pub fn proc_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
 
     f.render_widget(Table::new(rows, widths).column_spacing(1), inner);
 }
-

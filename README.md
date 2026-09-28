@@ -245,12 +245,26 @@ screen on your desk, a dark panel is the right answer to both.
 ## What it shows
 
 **CPU** total and per-core, user/system split, load averages against core
-count, 4 minutes of history · **Memory** used/total, macOS memory pressure,
-compressed, swap against its limit, with history · **Network** up/down
+count, up to 24 seconds of retained samples at 5 Hz · **Memory** used/total,
+macOS memory pressure, compressed, swap against its limit, with history · **Network** up/down
 throughput and session totals on the interface that actually carries the
 traffic · **Thermal** SoC and battery temperature with history
 · **Processes** top 8 by CPU · **Clock** taken from the Mac, because a Pi has
 no battery-backed clock of its own
+
+On the 7-inch layout, the process table aligns with the CPU history above it.
+The lower-right panel shows overall CPU usage as large block digits, using
+the existing console font. Its 0–100% value is the fraction of the whole
+machine's CPU capacity in use; process percentages use one core as 100% and
+must not be summed to obtain this figure.
+
+Network graphs share a labeled scale based on the visible samples, rounded
+up in powers of two with a 1 KiB/s minimum. The scale rises with traffic and
+falls when a burst leaves the visible window. Rates are bytes per second
+(`K` means 1024 bytes), so 400 kbit/s is about 49K/s. The RAM meter retains its
+absolute used/total scale; below it, a thin history line shows changes in RAM
+used with explicit zoom bounds and a minimum 256 MiB range. Each chart shows
+as many recent samples as its width permits, at one sample per column.
 
 Temperature on Apple Silicon has no documented unprivileged interface —
 `powermetrics` wants root. macdash reads the same private `IOHIDEventSystemClient`
