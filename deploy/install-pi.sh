@@ -17,8 +17,9 @@ if [[ -z "$HOST" ]]; then
     echo "  --ttf-size  pixel size for --ttf (default 24)."
     echo "  --font   console font to patch and load, without the .psf.gz."
     echo "           Keeps the installed typeface on updates unless specified."
-    echo "           Default Lat15-Terminus32x16 (16x32 cells: 120x33 on a"
-    echo "           1080p panel, big enough to read from a desk away)."
+    echo "           Default Lat15-Terminus16 (8x16 cells: 128x37 on the"
+    echo "           final 1024x600 panel, with all dashboard panels visible)."
+    echo "           Use Lat15-Terminus32x16 for larger text on a 1080p panel."
     echo "           Lat15-VGA16 gives the authentic IBM look at 240x67."
     echo "   e.g. $0 pi@192.168.0.148"
     exit 1
@@ -27,11 +28,9 @@ shift
 
 BACKLIGHT=""
 MAC_ADDR=""
-# Cell size decides the character grid, and the grid is what the layout is
-# tuned for: a 1080p panel at 16x32 is 120x33, close to the 128x37 the widgets
-# assume, while the same panel at 8x16 is 240x67 and leaves the dashboard
-# rattling around in a grid twice the size it was designed for.
-CONSOLE_FONT="Lat15-Terminus32x16"
+# The final 1024x600 panel needs 8x16 cells for the full 128x37 layout.
+# Existing installs retain their selected typeface and size unless overridden.
+CONSOLE_FONT="Lat15-Terminus16"
 KEEP_FONT=1
 # A .ttf/.otf to rasterize instead, for a font the distro does not ship.
 TTF_FONT=""

@@ -135,6 +135,19 @@ The installer preserves an existing custom console font unless you pass
 `--font` or `--ttf`. Font bitmaps and their Unicode map are loaded together
 before the first frame. Diagnostics go to the journal, not to the dashboard.
 
+For the **7-inch 1024×600 display**, use `Lat15-Terminus16`: its 8×16-pixel
+cells give a 128×37 grid, enough for CPU, memory, thermal, network and all
+eight processes. This is the default for new installations. The larger
+16×32 font used on a 1080p monitor gives only 64×18 on this panel, triggering
+the reduced layout.
+
+To resize an existing installation without restarting the dashboard, copy
+`deploy/fit-7-inch-display.sh` and `deploy/make-console-font.py` into the same
+directory on the Pi, then run `sudo bash fit-7-inch-display.sh` there. It
+loads the smaller patched font live, preserves history, and saves the font
+for future boots. The previous installed font is backed up as
+`/usr/local/share/consolefonts/macdash.psf.before-7-inch`.
+
 At boot, `macdash.timer` queues the service after `multi-user.target`,
 `cloud-final.service` and console setup have finished. The timer avoids an
 ordering cycle with cloud-init. Restart the display with

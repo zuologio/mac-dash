@@ -96,6 +96,7 @@ fn renders_on_the_target_panel() {
     assert!(out.contains("studio.local"), "hostname missing");
     assert!(out.contains("CPU"));
     assert!(out.contains("MEMORY"));
+    assert!(out.contains("THERMAL"));
     assert!(out.contains("TOP PROCESSES"));
     assert!(out.contains("NETWORK"));
     assert!(out.contains("LIVE"));
