@@ -104,6 +104,65 @@ fn renders_on_the_target_panel() {
 }
 
 #[test]
+fn portrait_stacks_every_panel_and_keeps_all_eight_processes() {
+    let mut dash = Dashboard::new();
+    let mut packet = sample_packet();
+    packet.procs = (0..8)
+        .map(|i| Proc::new(i, format!("proc{i}"), 10.0, 1 << 20))
+        .collect();
+    dash.ingest(packet, 0);
+    for (width, height) in [(75, 64), (60, 48), (100, 80)] {
+        let out = render_at(width, height, &dash, 0);
+        let titles: Vec<_> = out.lines().filter(|line| line.starts_with('┌')).collect();
+        assert_eq!(
+            titles.len(),
+            6,
+            "expected six portrait panels at {width}x{height}"
+        );
+        for (line, title) in titles.iter().zip([
+            "CPU TOTAL",
+            "CPU",
+            "MEMORY",
+            "THERMAL",
+            "NETWORK",
+            "TOP PROCESSES",
+        ]) {
+            assert!(
+                line.starts_with(&format!("┌ {title} ")),
+                "wrong panel order: {line}"
+            );
+            assert_eq!(line.chars().filter(|c| *c == '┌').count(), 1);
+            assert!(line.ends_with('┐'), "panel does not fill portrait width");
+        }
+        for i in 0..8 {
+            assert!(out.contains(&format!("proc{i}")), "process missing");
+        }
+        assert!(out.contains("used trend"));
+        assert!(out.contains("scale 0.."));
+        assert!(out.contains("session"));
+        assert!(out.lines().last().unwrap().contains("LIVE"));
+        assert_eq!(out.lines().count(), height as usize);
+    }
+}
+
+#[test]
+fn live_resize_between_landscape_and_portrait_reflows_without_stale_cells() {
+    let dash = populated();
+    let mut term = Terminal::new(TestBackend::new(128, 37)).unwrap();
+    for (width, height) in [(128, 37), (75, 64), (128, 37), (75, 64)] {
+        term.backend_mut().resize(width, height);
+        term.autoresize().unwrap();
+        term.draw(|f| ui::render(f, &dash, 40_000)).unwrap();
+        let buf = term.backend().buffer();
+        let out = (0..height)
+            .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(out, render_at(width, height, &dash, 40_000));
+    }
+}
+
+#[test]
 fn process_and_cpu_panels_share_the_same_divider() {
     for (width, height) in [(128, 37), (120, 40), (80, 24)] {
         let out = render_at(width, height, &populated(), 40_000);
@@ -215,6 +274,8 @@ fn survives_every_plausible_terminal_size() {
     let d = populated();
     for (w, h) in [
         (128, 37), // target panel
+        (75, 64),  // rotated 7-inch panel
+        (60, 48),  // compact portrait window
         (80, 24),  // classic terminal
         (120, 40),
         (200, 60), // large window

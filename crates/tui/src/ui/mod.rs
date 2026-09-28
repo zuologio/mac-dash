@@ -144,6 +144,14 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
     // off anyway.
     let dimmed = matches!(presence, Presence::Stale | Presence::Asleep);
 
+    // Console cells are roughly twice as tall as they are wide. A rotated
+    // 1024x600 panel with an 8x16 font is 75 columns by 64 rows, so comparing
+    // the raw row and column counts would misidentify it as landscape.
+    if area.width >= 50 && area.height >= 46 && u32::from(area.height) * 2 > u32::from(area.width) {
+        render_portrait(f, area, dash, dimmed);
+        return;
+    }
+
     if area.width < NARROW {
         // Narrow: stack everything in one column, drop the process table.
         let rows = Layout::default()
@@ -209,6 +217,25 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
         widgets::proc_panel(f, bottom[0], dash, dimmed);
         widgets::cpu_total_panel(f, bottom[1], dash, dimmed);
     }
+}
+
+fn render_portrait(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
+    let compact = area.height < 56;
+    let rows = Layout::vertical([
+        Constraint::Length(9), // large CPU percentage and context
+        Constraint::Min(7),    // CPU history gets remaining space
+        Constraint::Length(if compact { 7 } else { 9 }),
+        Constraint::Length(if compact { 5 } else { 7 }),
+        Constraint::Length(if compact { 8 } else { 11 }),
+        Constraint::Length(if compact { 10 } else { 11 }), // all eight processes
+    ])
+    .split(area);
+    widgets::cpu_total_panel(f, rows[0], dash, dimmed);
+    widgets::cpu_panel(f, rows[1], dash, dimmed);
+    widgets::mem_panel(f, rows[2], dash, dimmed);
+    widgets::temp_panel(f, rows[3], dash, dimmed);
+    widgets::net_panel(f, rows[4], dash, dimmed);
+    widgets::proc_panel(f, rows[5], dash, dimmed);
 }
 
 fn render_status(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence, now_ms: u64) {

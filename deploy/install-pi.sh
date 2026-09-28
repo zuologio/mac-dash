@@ -9,9 +9,11 @@ cd "$(dirname "$0")/.."
 HOST="${1:-}"
 if [[ -z "$HOST" ]]; then
     echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>]"
-    echo "          [--font <console-font>] [--hdmi] [--zero2]"
+    echo "          [--font <console-font>] [--hdmi] [--portrait|--landscape] [--zero2]"
     echo
     echo "  --hdmi   switch off HDMI while the Mac's display sleeps (VC4/KMS)."
+    echo "  --portrait  panel mounted clockwise, right-hand connectors facing down."
+    echo "  --landscape restore normal orientation; otherwise keep the installed setting."
     echo "  --ttf    a .ttf/.otf to rasterize into a console font, for a"
     echo "           look the distro does not ship (DepartureMono,"
     echo "           BigBlueTerminal). Needs freetype-py on this machine."
@@ -29,6 +31,7 @@ shift
 
 BACKLIGHT=""
 HDMI=0
+ROTATION=""
 MAC_ADDR=""
 # The final 1024x600 panel needs 8x16 cells for the full 128x37 layout.
 # Existing installs retain their selected typeface and size unless overridden.
@@ -42,6 +45,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --backlight) BACKLIGHT="$2"; shift 2 ;;
         --hdmi)      HDMI=1; shift ;;
+        --portrait)  ROTATION=3; shift ;;
+        --landscape) ROTATION=0; shift ;;
         --font)      CONSOLE_FONT="$2"; KEEP_FONT=0; shift 2 ;;
         --ttf)       TTF_FONT="$2"; shift 2 ;;
         --ttf-size)  TTF_SIZE="$2"; shift 2 ;;
@@ -115,6 +120,12 @@ fi
 cat > "$STAGE/macdash-install.sh" <<REMOTE
 set -euo pipefail
 
+# Check before stopping the working dashboard or replacing any installed file.
+if [ -n "${ROTATION}" ] && [ ! -w /sys/class/graphics/fbcon/rotate ]; then
+    echo "This kernel does not expose writable framebuffer-console rotation." >&2
+    exit 1
+fi
+
 trap 'if ! systemctl is-active --quiet macdash; then
           systemctl stop macdash.service macdash.timer 2>/dev/null || true
           systemctl unmask getty@tty1.service 2>/dev/null || true
@@ -179,6 +190,13 @@ install -m 755 /tmp/prepare-pi-console.sh /usr/local/bin/macdash-prepare-console
 install -m 644 /tmp/macdash.service /etc/systemd/system/macdash.service
 install -m 644 /tmp/macdash.timer /etc/systemd/system/macdash.timer
 mkdir -p /etc/systemd/system/macdash.service.d
+# Keep orientation in its own drop-in so ordinary updates preserve it.
+if [ -n "${ROTATION}" ]; then
+    cat > /etc/systemd/system/macdash.service.d/orientation.conf <<'ORIENTATION'
+[Service]
+Environment=MACDASH_CONSOLE_ROTATION=${ROTATION}
+ORIENTATION
+fi
 cat > /etc/systemd/system/macdash.service.d/display.conf <<'UNIT'
 [Service]
 ExecStart=

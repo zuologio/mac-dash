@@ -148,6 +148,56 @@ loads the smaller patched font live, preserves history, and saves the font
 for future boots. The previous installed font is backed up as
 `/usr/local/share/consolefonts/macdash.psf.before-7-inch`.
 
+### Portrait enclosure
+
+Turning the physical panel **90° clockwise** puts its right-hand connectors
+at the bottom. Rotate the console image **counterclockwise** to compensate:
+Linux's framebuffer console uses `3` for this orientation. With the existing
+8×16 font, the 600×1024 view is **75 columns × 64 rows**. The dashboard detects
+the taller grid and stacks the large CPU percentage, CPU history, memory,
+thermal, network and all eight processes vertically.
+
+Install normally with portrait orientation and HDMI sleep enabled:
+
+```bash
+./deploy/build-pi.sh
+./deploy/install-pi.sh user@pi-host --portrait --hdmi --font Lat15-Terminus16
+```
+
+The installer saves the orientation in a systemd drop-in and applies it before
+the dashboard starts, including after reboot. The font option ensures the
+75×64 grid. No separate rotation command or reboot is needed. Later installs
+preserve the orientation unless `--landscape` or `--portrait` is supplied;
+continue passing `--hdmi` to retain automatic display sleep. To return to
+landscape, install with `--landscape --hdmi`.
+
+For an optional timed preview without replacing the installed dashboard or changing boot settings,
+build the Pi binary, copy it under a temporary name along with the preview
+script, and run the script over SSH. Replace `user@pi-host` below:
+
+```bash
+./deploy/build-pi.sh
+scp target/arm-unknown-linux-musleabihf/release/macdash-tui user@pi-host:/tmp/macdash-portrait
+scp deploy/preview-portrait.sh user@pi-host:/tmp/
+ssh -t user@pi-host 'sudo bash /tmp/preview-portrait.sh 120'
+```
+
+The preview runs for two minutes (10–600 seconds accepted). It temporarily
+stops the installed service, starts the new binary with the same arguments
+in a transient systemd unit, and restores the previous orientation and
+installed service when the timer expires or you press Ctrl-C. Metrics history
+starts fresh at each service change. Keep the Mac awake to inspect the layout;
+the preview retains the existing HDMI sleep setting. The kernel must expose
+`/sys/class/graphics/fbcon/rotate`.
+
+The layout also switches automatically when the console is rotated live.
+For rotation alone, `sudo sh -c 'echo 3 > /sys/class/graphics/fbcon/rotate'`
+selects portrait and `echo 0` to the same file returns to landscape. These
+runtime settings do not change the boot configuration. See the
+[Linux framebuffer console documentation](https://docs.kernel.org/fb/fbcon.html).
+
+### Service startup
+
 At boot, `macdash.timer` queues the service after `multi-user.target`,
 `cloud-final.service` and console setup have finished. The timer avoids an
 ordering cycle with cloud-init. Restart the display with
