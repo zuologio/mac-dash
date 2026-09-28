@@ -467,11 +467,11 @@ fn renders_display_off_state() {
     assert!(out.contains("studio.local"));
 }
 
-/// The symptom that prompted this: at 5 Hz the CPU headline visibly twitched
-/// as values crossed a digit boundary. Every field in that row must keep its
+/// At 5 Hz the CPU summary must not twitch as values cross a digit boundary.
+/// Every field in that row must keep its
 /// width, or everything to its right slides sideways on the next packet.
 #[test]
-fn cpu_headline_does_not_shift_as_values_change() {
+fn cpu_summary_does_not_shift_as_values_change() {
     let mut widths = Vec::new();
     let mut texts = Vec::new();
     // Values chosen to straddle every width boundary these formatters have:
@@ -494,14 +494,13 @@ fn cpu_headline_does_not_shift_as_values_change() {
         let line = out
             .lines()
             .find(|l| l.contains("usr"))
-            .expect("CPU headline missing")
+            .expect("CPU summary missing")
             .to_string();
         // Where each label sits is what must not move.
         widths.push((
             line.find("usr").unwrap(),
             line.find("sys").unwrap(),
             line.find("load").unwrap(),
-            line.find("cores").unwrap(),
         ));
         texts.push(line);
     }
@@ -514,4 +513,79 @@ fn cpu_headline_does_not_shift_as_values_change() {
             texts[i].trim_end()
         );
     }
+}
+
+#[test]
+fn portrait_core_boxes_share_one_row_and_reflect_each_core() {
+    let mut d = Dashboard::new();
+    let mut p = sample_packet();
+    p.cpu.cores = vec![0.0, 25.0, 50.0, 60.0, 84.0, 85.0, 100.0, 12.0, 4.0, 99.0];
+    d.ingest(p, 1000);
+    let mut term = Terminal::new(TestBackend::new(75, 64)).unwrap();
+    term.draw(|f| ui::render(f, &d, 1100)).unwrap();
+    let buf = term.backend().buffer();
+    let out = render_at(75, 64, &d, 1100);
+    let lines: Vec<_> = out.lines().collect();
+    let cpu_y = lines.iter().position(|l| l.starts_with("┌ CPU ─")).unwrap();
+    let y = cpu_y as u16 + 1;
+    let starts: Vec<_> = (1..74).filter(|&x| buf[(x, y)].symbol() == "┌").collect();
+    assert_eq!(
+        starts.len(),
+        10,
+        "all cores must have separate boxes on one row"
+    );
+    for (i, &x) in starts.iter().enumerate() {
+        let end = (x + 1..74)
+            .find(|&end| buf[(end, y)].symbol() == "┐")
+            .unwrap();
+        let title: String = (x + 1..end).map(|c| buf[(c, y)].symbol()).collect();
+        assert_eq!(title.trim_matches('─'), (i + 1).to_string());
+        if i < 9 {
+            assert_eq!(buf[(end + 1, y)].symbol(), " ");
+        }
+    }
+    for (index, color) in [
+        (1, ui::theme::OK),
+        (3, ui::theme::WARN),
+        (5, ui::theme::CRIT),
+    ] {
+        assert_eq!(buf[(starts[index] + 1, y + 2)].fg, color);
+    }
+    assert_eq!(
+        buf[(starts[0] + 1, y + 2)].symbol(),
+        "·",
+        "idle core must be empty"
+    );
+    assert_eq!(
+        buf[(starts[6] + 1, y + 2)].symbol(),
+        "█",
+        "busy core must be full"
+    );
+    assert_eq!(out.matches("usr").count(), 1);
+    assert_eq!(out.matches("load").count(), 1);
+    let mem_y = lines
+        .iter()
+        .position(|l| l.starts_with("┌ MEMORY "))
+        .unwrap();
+    assert!(!lines[cpu_y..mem_y]
+        .iter()
+        .any(|l| l.contains("23.4%") || l.contains("sys")));
+
+    term.draw(|f| ui::render(f, &d, 10_000)).unwrap();
+    assert_eq!(
+        term.backend().buffer()[(starts[5] + 1, y + 2)].fg,
+        ui::theme::DIM
+    );
+}
+
+#[test]
+fn missing_core_samples_are_distinct_from_idle_cores() {
+    let mut d = Dashboard::new();
+    let mut p = sample_packet();
+    p.cpu.cores = vec![0.0, f32::NAN];
+    d.ingest(p, 1000);
+    let out = render_at(75, 64, &d, 1100);
+    let values = out.lines().find(|l| l.contains("--%")).unwrap();
+    assert_eq!(values.matches("--%").count(), 9);
+    assert_eq!(values.matches("  0%").count(), 1);
 }

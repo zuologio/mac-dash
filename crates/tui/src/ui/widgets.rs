@@ -52,96 +52,132 @@ fn bar(pct: f32, width: u16, dimmed: bool) -> Line<'static> {
     ])
 }
 
-pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
+pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool, show_total: bool) {
     let block = panel("CPU", dimmed);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    if inner.height == 0 {
+    if inner.is_empty() {
         return;
     }
 
     let Some(pkt) = &dash.latest else { return };
     let total = pkt.cpu.total.unwrap_or(0.0);
+    let count = (pkt.cpu.ncpu as usize).max(pkt.cpu.cores.len());
+    // Four rows give each core a border, percentage and fill. Narrow windows
+    // retain the compact bars rather than clipping cores off the right edge.
+    let boxed = count > 0
+        && count.saturating_mul(6).saturating_sub(1) <= inner.width as usize
+        && inner.height >= 6 + u16::from(show_total);
+    let core_height = if boxed { 4 } else { u16::from(count > 0) };
+    let rows = Layout::vertical([
+        Constraint::Length(u16::from(show_total)),
+        Constraint::Length(core_height),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .split(inner);
 
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1), // headline + load
-            Constraint::Length(1), // gauge
-            Constraint::Min(0),    // cores + sparkline
-        ])
-        .split(inner);
-
-    let headline = Line::from(vec![
-        Span::styled(
-            format!("{total:>5.1}%"),
-            Style::default()
-                .fg(if dimmed {
-                    theme::DIM
-                } else {
-                    theme::scale(total)
-                })
-                .add_modifier(Modifier::BOLD),
-        ),
-        // Every field here is fixed-width, and deliberately not trimmed.
-        // `pct` and `load` pad precisely so that a value crossing 9.9 -> 10.0
-        // does not widen its field and shove everything to its right along;
-        // trimming them throws that away and the whole line twitches at 5 Hz.
-        Span::styled(
-            format!(
-                "  usr {}  sys {}",
-                format::pct(pkt.cpu.user),
-                format::pct(pkt.cpu.sys)
-            ),
-            fg(dimmed, theme::DIM),
-        ),
-        // Load averages relative to core count: 8.0 means something very
-        // different on a 4-core machine than on a 24-core one, so the two
-        // belong side by side.
-        Span::styled(
-            format!(
-                "   load {} {} {}   {} cores",
-                format::load(pkt.cpu.load[0]),
-                format::load(pkt.cpu.load[1]),
-                format::load(pkt.cpu.load[2]),
-                pkt.cpu.ncpu
-            ),
-            fg(dimmed, theme::DIM),
-        ),
-    ]);
-    f.render_widget(Paragraph::new(headline), rows[0]);
-
-    f.render_widget(Paragraph::new(bar(total, rows[1].width, dimmed)), rows[1]);
-
-    if rows[2].height == 0 {
-        return;
+    // Small windows omit CPU TOTAL, so keep the overall value there only.
+    if show_total {
+        f.render_widget(
+            Paragraph::new(format!(
+                "{}  {}",
+                format::pct(pkt.cpu.total),
+                cpu_context(pkt, inner.width.saturating_sub(7))
+            ))
+            .style(fg(dimmed, theme::DIM)),
+            rows[0],
+        );
     }
-
-    // Per-core bars, then whatever height is left goes to the history graph.
-    let want_cores = !pkt.cpu.cores.is_empty() && rows[2].height >= 2;
-    let split = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(if want_cores {
-            [Constraint::Length(1), Constraint::Min(0)].as_ref()
-        } else {
-            [Constraint::Length(0), Constraint::Min(0)].as_ref()
-        })
-        .split(rows[2]);
-
-    if want_cores {
-        f.render_widget(Paragraph::new(core_bars(&pkt.cpu.cores, dimmed)), split[0]);
+    if boxed {
+        core_boxes(f, rows[1], &pkt.cpu.cores, count, dimmed);
+    } else if core_height > 0 {
+        f.render_widget(Paragraph::new(core_bars(&pkt.cpu.cores, dimmed)), rows[1]);
     }
-
-    if split[1].height > 0 && !dash.cpu_history.is_empty() {
-        let data = dash.cpu_history.tail(split[1].width as usize);
-        // CPU keeps an absolute 0-100% scale; extra rows buy resolution.
+    f.render_widget(Paragraph::new(bar(total, rows[2].width, dimmed)), rows[2]);
+    if rows[3].height > 0 && !dash.cpu_history.is_empty() {
+        let data = dash.cpu_history.tail(rows[3].width as usize);
         f.render_widget(
             Sparkline::default()
                 .data(&data)
                 .max(100)
                 .style(fg(dimmed, theme::ACCENT)),
-            split[1],
+            rows[3],
         );
+    }
+}
+
+fn cpu_context(pkt: &macdash_proto::StatsPacket, width: u16) -> String {
+    // Fixed-width fields prevent the centered summary shifting at 5 Hz.
+    let mut text = format!(
+        "usr {}  sys {}",
+        format::pct(pkt.cpu.user),
+        format::pct(pkt.cpu.sys)
+    );
+    let load = format!(
+        "  load {} {} {}",
+        format::load(pkt.cpu.load[0]),
+        format::load(pkt.cpu.load[1]),
+        format::load(pkt.cpu.load[2]),
+    );
+    if text.len() + load.len() <= width as usize {
+        text.push_str(&load);
+    }
+    text
+}
+
+fn core_boxes(f: &mut Frame, area: Rect, cores: &[f32], count: usize, dimmed: bool) {
+    for i in 0..count {
+        // Distribute spare columns evenly, with a one-column gap per box.
+        let start = (area.width as usize + 1) * i / count;
+        let end = (area.width as usize + 1) * (i + 1) / count - 1;
+        let rect = Rect::new(
+            area.x + start as u16,
+            area.y,
+            (end - start) as u16,
+            area.height,
+        );
+        let value = cores
+            .get(i)
+            .copied()
+            .filter(|v| v.is_finite())
+            .map(|v| v.clamp(0.0, 100.0));
+        let style = fg(dimmed, value.map(theme::scale).unwrap_or(theme::DIM));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(fg(dimmed, theme::DIM))
+            .title(Line::from((i + 1).to_string()).alignment(Alignment::Center));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+        if inner.is_empty() {
+            continue;
+        }
+        // On narrower terminals the fill remains readable even when a
+        // three-digit percentage plus '%' cannot fit inside the box.
+        let label = if inner.width >= 4 {
+            value
+                .map(|v| format!("{:>3.0}%", v))
+                .unwrap_or_else(|| " --%".into())
+        } else {
+            value
+                .map(|v| format!("{:.0}", v))
+                .unwrap_or_else(|| "--".into())
+        };
+        f.render_widget(
+            Paragraph::new(label)
+                .alignment(Alignment::Center)
+                .style(style),
+            Rect::new(inner.x, inner.y, inner.width, 1),
+        );
+        if inner.height > 1 {
+            let fill = value
+                .map(|v| bar(v, inner.width, dimmed))
+                .unwrap_or_else(|| Line::from(""));
+            f.render_widget(
+                Paragraph::new(fill),
+                Rect::new(inner.x, inner.y + 1, inner.width, 1),
+            );
+        }
     }
 }
 
@@ -317,11 +353,7 @@ pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool
     f.render_widget(
         Paragraph::new(vec![
             Line::from(format!("of total capacity / {} cores", pkt.cpu.ncpu)),
-            Line::from(format!(
-                "usr {}  sys {}",
-                format::pct(pkt.cpu.user),
-                format::pct(pkt.cpu.sys)
-            )),
+            Line::from(cpu_context(pkt, inner.width)),
         ])
         .alignment(Alignment::Center)
         .style(fg(dimmed, theme::DIM)),

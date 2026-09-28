@@ -162,7 +162,7 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
                 Constraint::Min(0),
             ])
             .split(area);
-        widgets::cpu_panel(f, rows[0], dash, dimmed);
+        widgets::cpu_panel(f, rows[0], dash, dimmed, true);
         widgets::mem_panel(f, rows[1], dash, dimmed);
         if rows[2].height >= 4 {
             widgets::net_panel(f, rows[2], dash, dimmed);
@@ -193,7 +193,7 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(rows[0]);
 
-    widgets::cpu_panel(f, top[0], dash, dimmed);
+    widgets::cpu_panel(f, top[0], dash, dimmed, !show_procs);
 
     // Three panels down the right, each with room for its own history.
     let right = Layout::default()
@@ -231,7 +231,7 @@ fn render_portrait(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     ])
     .split(area);
     widgets::cpu_total_panel(f, rows[0], dash, dimmed);
-    widgets::cpu_panel(f, rows[1], dash, dimmed);
+    widgets::cpu_panel(f, rows[1], dash, dimmed, false);
     widgets::mem_panel(f, rows[2], dash, dimmed);
     widgets::temp_panel(f, rows[3], dash, dimmed);
     widgets::net_panel(f, rows[4], dash, dimmed);

@@ -302,9 +302,15 @@ traffic · **Thermal** SoC and battery temperature with history
 · **Processes** top 8 by CPU · **Clock** taken from the Mac, because a Pi has
 no battery-backed clock of its own
 
-On the 7-inch layout, the process table aligns with the CPU history above it.
+On the 7-inch display, per-core usage appears in a single row of numbered
+boxes, with a percentage and fill bar in each. Green indicates below 60%,
+yellow 60–84%, and red 85% or higher. Small terminal windows fall back to
+compact core bars. The CPU summary shows user/system usage and load averages;
+the history panel does not repeat those numbers.
+
+In landscape, the process table aligns with the CPU history above it.
 The lower-right panel shows overall CPU usage as large block digits, using
-the existing console font. Its 0–100% value is the fraction of the whole
+the existing console font; in portrait this panel sits at the top. Its 0–100% value is the fraction of the whole
 machine's CPU capacity in use; process percentages use one core as 100% and
 must not be summed to obtain this figure.
 
