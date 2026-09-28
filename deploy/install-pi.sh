@@ -9,8 +9,9 @@ cd "$(dirname "$0")/.."
 HOST="${1:-}"
 if [[ -z "$HOST" ]]; then
     echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>]"
-    echo "          [--font <console-font>] [--zero2]"
+    echo "          [--font <console-font>] [--hdmi] [--zero2]"
     echo
+    echo "  --hdmi   switch off HDMI while the Mac's display sleeps (VC4/KMS)."
     echo "  --ttf    a .ttf/.otf to rasterize into a console font, for a"
     echo "           look the distro does not ship (DepartureMono,"
     echo "           BigBlueTerminal). Needs freetype-py on this machine."
@@ -27,6 +28,7 @@ fi
 shift
 
 BACKLIGHT=""
+HDMI=0
 MAC_ADDR=""
 # The final 1024x600 panel needs 8x16 cells for the full 128x37 layout.
 # Existing installs retain their selected typeface and size unless overridden.
@@ -39,6 +41,7 @@ TARGET="arm-unknown-linux-musleabihf"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --backlight) BACKLIGHT="$2"; shift 2 ;;
+        --hdmi)      HDMI=1; shift ;;
         --font)      CONSOLE_FONT="$2"; KEEP_FONT=0; shift 2 ;;
         --ttf)       TTF_FONT="$2"; shift 2 ;;
         --ttf-size)  TTF_SIZE="$2"; shift 2 ;;
@@ -69,6 +72,7 @@ ARGS="--name $(hostname -s 2>/dev/null || echo display)"
 # before sizing its buffers for the font's character grid.
 ARGS="$ARGS --font /usr/local/share/consolefonts/macdash.psf"
 [[ -n "$BACKLIGHT" ]] && ARGS="$ARGS --backlight $BACKLIGHT"
+[[ "$HDMI" = 1 ]] && ARGS="$ARGS --hdmi"
 [[ -n "$MAC_ADDR" ]] && ARGS="$ARGS --mac $MAC_ADDR"
 
 echo "Installing to ${HOST}"
@@ -180,6 +184,11 @@ cat > /etc/systemd/system/macdash.service.d/display.conf <<'UNIT'
 ExecStart=
 ExecStart=/usr/local/bin/macdash-tui ${ARGS}
 UNIT
+if [ "${HDMI}" = 1 ]; then
+    # Restore HDMI even after SIGTERM, a crash, or a failed service start.
+    printf '%s\n' 'ExecStopPost=/bin/sh -c "echo 0 > /sys/class/graphics/fb0/blank"' \
+        >> /etc/systemd/system/macdash.service.d/display.conf
+fi
 rm -f /tmp/macdash.service /tmp/macdash.timer /tmp/prepare-pi-console.sh
 
 # A timer starts the display after the boot jobs settle, without making

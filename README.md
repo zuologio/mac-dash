@@ -195,7 +195,7 @@ against a longer threshold:
 |---|---|---|
 | packets flowing | `LIVE` | normal |
 | Mac's display asleep | `DISPLAY OFF` | **backlight off**, values current |
-| silence 1–10 s | `STALE` | values dimmed |
+| silence 1–10 s | `STALE` | values dimmed; an already sleeping display stays off |
 | silence > 10 s | `ASLEEP` | **backlight off**, values dimmed |
 
 A Mac on AC power is often set never to sleep, in which case the silence this
@@ -203,18 +203,41 @@ once relied on never arrives — the screen goes dark, you walk away, and the
 panel stays lit all evening. The agent reports its display state directly, so
 the panel follows the screen rather than the machine.
 
-Any arriving packet restores it, so waking the Mac lights the panel within one
-200 ms tick. It needed no protocol support at all.
+A packet reporting the Mac's display awake restores the output. Packets that
+still report display sleep keep it off. Older agents without a display-state
+field restore it on any packet. The dashboard keeps receiving and recording
+metrics while the screen is off.
 
-Enable it when your screen arrives:
+For an HDMI panel on the Pi's **VC4/KMS framebuffer console**, enable HDMI
+standby:
+
+```bash
+./deploy/build-pi.sh
+./deploy/install-pi.sh <user@pi-host> --hdmi
+```
+
+This writes `4` (power down) or `0` (restore) to
+`/sys/class/graphics/fb0/blank`. The LAFVIN 7-inch HDMI panel was checked with
+this method: it goes fully dark and the dashboard returns when output resumes.
+The panel may show “No signal” before its own standby delay expires. HDMI
+standby does not set a brightness percentage: set the panel's physical
+brightness control to 100% if that is the level you want when it wakes.
+
+The dashboard skips drawing while HDMI is off, repaints on wake, and retries
+failed power transitions once a second. Output is restored on exit; the
+installer also adds a systemd stop action to restore it after a crash or
+service stop. This option targets `fb0` and requires write access to its
+`blank` file (the installed service runs as root).
+
+For a panel with a Linux backlight device, use:
 
 ```bash
 ./deploy/install-pi.sh pi@192.168.0.148 --backlight /sys/class/backlight/rpi_backlight
 ```
 
-The Pi restores the brightness you had set, not the maximum. Without the flag
-the whole mechanism is a no-op, so the same binary runs fine on a Pi with no
-panel.
+The backlight option restores the brightness you had set, not the maximum.
+Without either option, display power control is disabled. Pass `--hdmi` again
+on subsequent installations to keep HDMI standby enabled.
 
 One honest limitation: a WiFi dropout looks exactly like a sleeping Mac. For a
 screen on your desk, a dark panel is the right answer to both.
@@ -351,7 +374,8 @@ cargo run --release -p macdash-tui --example snapshot     # one frame as text
 · `--once` one JSON snapshot · `--list-sensors` raw thermal dump · `-v` log
 discovery
 
-**Display** `--backlight <path>` panel to darken on sleep · `--name <label>`
+**Display** `--hdmi` HDMI standby on sleep (VC4/KMS, fb0) ·
+`--backlight <path>` panel to darken on sleep · `--name <label>`
 identify in agent logs · `--port <n>` listen port · `--no-beacon` disable
 announcements
 

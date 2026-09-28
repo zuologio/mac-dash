@@ -9,6 +9,7 @@
 mod beacon;
 mod brightness;
 mod console_font;
+mod hdmi;
 mod receiver;
 mod repaint;
 mod state;
@@ -39,6 +40,7 @@ struct Args {
     port: u16,
     name: Option<String>,
     backlight: Option<String>,
+    hdmi: bool,
     no_beacon: bool,
     /// Patched console font to load before drawing. The bars are made of
     /// partial-block glyphs that no stock console font has.
@@ -53,6 +55,7 @@ fn parse_args() -> Result<Args, String> {
         port: DEFAULT_STATS_PORT,
         name: None,
         backlight: None,
+        hdmi: false,
         no_beacon: false,
         font: None,
         macs: Vec::new(),
@@ -66,6 +69,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--name" => args.name = Some(it.next().ok_or("--name needs a value")?),
             "--backlight" => args.backlight = Some(it.next().ok_or("--backlight needs a path")?),
+            "--hdmi" => args.hdmi = true,
             "--no-beacon" => args.no_beacon = true,
             "--font" => args.font = Some(it.next().ok_or("--font needs a path")?),
             "--mac" => {
@@ -102,6 +106,8 @@ OPTIONS:
     --name <label>      Identify this display in the agent's logs
     --backlight <path>  Panel to darken when the Mac sleeps, e.g.
                         /sys/class/backlight/rpi_backlight
+    --hdmi             Power down HDMI when the Mac's display sleeps.
+                        For the Pi's VC4/KMS framebuffer console (fb0).
     --mac <ip>          Announce directly to this Mac as well as by
                         multicast. Use when the dashboard never leaves
                         WAITING: many access points drop multicast
@@ -164,8 +170,26 @@ fn main() {
     }
 
     let mut backlight = MaybeBacklight::new(args.backlight.as_deref());
+    let mut hdmi = if args.hdmi {
+        match hdmi::HdmiPower::open(hdmi::BLANK_FILE) {
+            Ok(power) => Some(power),
+            Err(e) => {
+                eprintln!("macdash: HDMI power control disabled: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
-    if let Err(e) = run(rx, &mut backlight, args.font.as_deref()) {
+    let result = run(rx, &mut backlight, &mut hdmi, args.font.as_deref());
+    // Restore even when terminal setup or cleanup fails. systemd also does
+    // this on termination, where Rust destructors may not run.
+    backlight.set(true);
+    if let Some(power) = &mut hdmi {
+        power.restore();
+    }
+    if let Err(e) = result {
         // ENXIO/ENOTTY here means stdout is not a terminal — the common case
         // being a pipe or a cron job. The raw errno ("Device not configured")
         // explains nothing, so name the actual problem and the way out.
@@ -190,6 +214,7 @@ fn main() {
 fn run(
     rx: receiver::LatestPacket,
     backlight: &mut MaybeBacklight,
+    hdmi: &mut Option<hdmi::HdmiPower>,
     font: Option<&str>,
 ) -> io::Result<()> {
     // Loading a font can resize the character grid. Do it before creating
@@ -218,18 +243,27 @@ fn run(
         let now = now_ms();
 
         // Backlight follows presence, on transitions only (ANALYSIS.md §6).
-        if let Some(p) = dash.presence.poll_transition(now) {
-            backlight.set(p.wants_backlight());
+        let wants_display = dash.presence.wants_backlight(now);
+        if dash.presence.poll_transition(now).is_some() {
+            backlight.set(wants_display);
+        }
+        if let Some(power) = hdmi.as_mut() {
+            if power.set(wants_display, now) {
+                repaint::invalidate(&mut terminal);
+            }
         }
 
         // Periodically rewrite every cell, so anything else that writes to
         // this console — a late boot message, a kernel warning — is painted
         // over rather than left sitting on the static parts of the UI.
         // This deliberately does not clear the screen first; see repaint.rs.
-        repainter.maybe_invalidate(&mut terminal);
-
-        if let Err(e) = terminal.draw(|f| ui::render(f, &dash, now)) {
-            break Err(e);
+        // Continue receiving data and polling keys while HDMI is off, but
+        // avoid rendering invisible frames. A failed power-off keeps drawing.
+        if !hdmi.as_ref().is_some_and(|power| power.is_off()) {
+            repainter.maybe_invalidate(&mut terminal);
+            if let Err(e) = terminal.draw(|f| ui::render(f, &dash, now)) {
+                break Err(e);
+            }
         }
 
         // Poll for input for the remainder of the frame, so a keypress is
@@ -266,8 +300,6 @@ fn run(
     // Always restore the terminal, even on error: leaving a console in raw
     // mode on a headless Pi with no keyboard would require a power cycle.
     restore_terminal(&mut terminal)?;
-    // Leave the panel lit on exit; a dark screen after quitting looks broken.
-    backlight.set(true);
     result
 }
 

@@ -123,6 +123,13 @@ impl PresenceTracker {
     pub fn millis_since_packet(&self, now_ms: u64) -> Option<u64> {
         self.last_packet_ms.map(|l| now_ms.saturating_sub(l))
     }
+
+    /// Keep a sleeping display dark through the stale interval. Silence is
+    /// not evidence that the Mac's display woke up; only a new packet is.
+    pub fn wants_backlight(&self, now_ms: u64) -> bool {
+        let presence = self.presence(now_ms);
+        presence.wants_backlight() && !(presence == Presence::Stale && self.display_asleep)
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +252,36 @@ mod tests {
         t.on_packet(200, Some(false));
         assert_eq!(t.presence(200), Presence::Live);
         assert!(t.presence(200).wants_backlight());
+    }
+
+    #[test]
+    fn display_sleep_stays_dark_through_silence_until_an_awake_packet() {
+        let mut t = PresenceTracker::new();
+        assert!(t.wants_backlight(0));
+        t.on_packet(0, Some(true));
+        for now in [100, 1_000, 5_000, 10_000, 60_000] {
+            assert!(!t.wants_backlight(now), "unexpected wake at {now} ms");
+        }
+        t.on_packet(60_100, Some(true));
+        assert!(
+            !t.wants_backlight(60_100),
+            "sleeping packets must not wake it"
+        );
+        t.on_packet(60_200, Some(false));
+        assert!(t.wants_backlight(60_200));
+    }
+
+    #[test]
+    fn an_awake_display_stays_lit_during_short_packet_gaps() {
+        let mut t = PresenceTracker::new();
+        t.on_packet(0, Some(false));
+        assert!(t.wants_backlight(5_000));
+        assert!(!t.wants_backlight(10_000));
+        t.on_packet(10_100, None);
+        assert!(
+            t.wants_backlight(10_100),
+            "older agents still wake the display"
+        );
     }
 
     /// Real sleep outranks display sleep: once packets stop, the flag is a
