@@ -341,7 +341,7 @@ pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool
         .map(|v| v.clamp(0.0, 100.0));
     let text = format::pct(total);
     let style = fg(dimmed, total.map(theme::scale).unwrap_or(theme::DIM));
-    let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).split(inner);
+    let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
     if !big_digits::render(f, rows[0], &text, style) {
         f.render_widget(
             Paragraph::new(text)
@@ -351,12 +351,9 @@ pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool
         );
     }
     f.render_widget(
-        Paragraph::new(vec![
-            Line::from(format!("of total capacity / {} cores", pkt.cpu.ncpu)),
-            Line::from(cpu_context(pkt, inner.width)),
-        ])
-        .alignment(Alignment::Center)
-        .style(fg(dimmed, theme::DIM)),
+        Paragraph::new(cpu_context(pkt, inner.width))
+            .alignment(Alignment::Center)
+            .style(fg(dimmed, theme::DIM)),
         rows[1],
     );
 }

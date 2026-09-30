@@ -146,6 +146,64 @@ fn portrait_stacks_every_panel_and_keeps_all_eight_processes() {
 }
 
 #[test]
+fn both_panel_orientations_show_all_metrics_and_ten_core_boxes() {
+    let mut dash = Dashboard::new();
+    let mut p = sample_packet();
+    p.procs = (0..8)
+        .map(|i| Proc::new(i, format!("proc{i}"), 10.0, 1 << 20))
+        .collect();
+    dash.ingest(p, 1000);
+    for (width, height) in [(128, 37), (75, 64)] {
+        let out = render_at(width, height, &dash, 1100);
+        for text in [
+            "CPU TOTAL",
+            "MEMORY",
+            "THERMAL",
+            "NETWORK",
+            "TOP PROCESSES",
+            "usr 12.1%",
+            "sys 11.3%",
+            "1.18",
+            "2.29",
+            "2.62",
+            "12.0G / 16.0G",
+            "pressure 51%",
+            "compressed 5.8G",
+            "swap 1.6G / 3.0G",
+            "used trend",
+            "44.8°C",
+            "31.1°C",
+            "125K/s",
+            "9.0K/s",
+            "scale 0..",
+            "session",
+            "LIVE",
+        ] {
+            assert!(out.contains(text), "{text} missing at {width}x{height}");
+        }
+        for i in 0..8 {
+            assert!(out.contains(&format!("proc{i}")));
+        }
+        let mut lines = out.lines();
+        lines.find(|l| l.starts_with("┌ CPU ─")).unwrap();
+        let boxes = lines.next().unwrap();
+        assert_eq!(
+            boxes.matches('┌').count(),
+            10,
+            "ten cores must share one row"
+        );
+        assert!(boxes.contains("10"));
+        let values = lines.next().unwrap();
+        for value in ["88%", "42%", "12%", "4%", "0%"] {
+            assert!(values.contains(value));
+        }
+        assert!(!out.contains("of total capacity"));
+        assert_eq!(out.matches("usr").count(), 1);
+        assert_eq!(out.matches("load").count(), 1);
+    }
+}
+
+#[test]
 fn live_resize_between_landscape_and_portrait_reflows_without_stale_cells() {
     let dash = populated();
     let mut term = Terminal::new(TestBackend::new(128, 37)).unwrap();

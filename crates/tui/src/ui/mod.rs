@@ -222,7 +222,7 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
 fn render_portrait(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     let compact = area.height < 56;
     let rows = Layout::vertical([
-        Constraint::Length(9), // large CPU percentage and context
+        Constraint::Length(8), // large CPU percentage and context
         Constraint::Min(7),    // CPU history gets remaining space
         Constraint::Length(if compact { 7 } else { 9 }),
         Constraint::Length(if compact { 5 } else { 7 }),

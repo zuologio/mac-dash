@@ -9,11 +9,12 @@ cd "$(dirname "$0")/.."
 HOST="${1:-}"
 if [[ -z "$HOST" ]]; then
     echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>]"
-    echo "          [--font <console-font>] [--hdmi] [--portrait|--landscape] [--zero2]"
+    echo "          [--font <console-font>] [--hdmi] [--portrait|--landscape|--landscape-flipped] [--zero2]"
     echo
     echo "  --hdmi   switch off HDMI while the Mac's display sleeps (VC4/KMS)."
     echo "  --portrait  panel mounted clockwise, right-hand connectors facing down."
     echo "  --landscape restore normal orientation; otherwise keep the installed setting."
+    echo "  --landscape-flipped  rotate landscape 180 degrees, connectors at bottom left."
     echo "  --ttf    a .ttf/.otf to rasterize into a console font, for a"
     echo "           look the distro does not ship (DepartureMono,"
     echo "           BigBlueTerminal). Needs freetype-py on this machine."
@@ -47,6 +48,7 @@ while [[ $# -gt 0 ]]; do
         --hdmi)      HDMI=1; shift ;;
         --portrait)  ROTATION=3; shift ;;
         --landscape) ROTATION=0; shift ;;
+        --landscape-flipped) ROTATION=2; shift ;;
         --font)      CONSOLE_FONT="$2"; KEEP_FONT=0; shift 2 ;;
         --ttf)       TTF_FONT="$2"; shift 2 ;;
         --ttf-size)  TTF_SIZE="$2"; shift 2 ;;

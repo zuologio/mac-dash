@@ -167,9 +167,30 @@ Install normally with portrait orientation and HDMI sleep enabled:
 The installer saves the orientation in a systemd drop-in and applies it before
 the dashboard starts, including after reboot. The font option ensures the
 75×64 grid. No separate rotation command or reboot is needed. Later installs
-preserve the orientation unless `--landscape` or `--portrait` is supplied;
+preserve the orientation unless `--landscape`, `--landscape-flipped` or `--portrait` is supplied;
 continue passing `--hdmi` to retain automatic display sleep. To return to
-landscape, install with `--landscape --hdmi`.
+landscape, use the same binary with the other flag:
+
+```bash
+./deploy/install-pi.sh user@pi-host --landscape --hdmi --font Lat15-Terminus16
+```
+
+Both orientations show the same metrics and all eight processes. In landscape
+the ten core boxes sit in one row above the upper-left CPU history, and the
+large CPU percentage sits at bottom right. Switching back requires only
+replacing `--landscape` with `--portrait`; no branch change or rebuild is needed
+unless the code has changed. Installation restarts the dashboard, so its
+rolling history starts fresh.
+
+To mount the panel upside down with the HDMI and USB connectors at bottom
+left, select landscape rotated 180°:
+
+```bash
+./deploy/install-pi.sh user@pi-host --landscape-flipped --hdmi --font Lat15-Terminus16
+```
+
+This keeps the same landscape layout and saves the rotation across service
+restarts and reboots. Use `--landscape` to return to normal orientation.
 
 For an optional timed preview without replacing the installed dashboard or changing boot settings,
 build the Pi binary, copy it under a temporary name along with the preview
