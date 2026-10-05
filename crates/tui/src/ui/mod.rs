@@ -43,7 +43,7 @@ pub fn render(f: &mut Frame, dash: &Dashboard, now_ms: u64) {
         // No data yet: explain what the display is waiting for rather than
         // showing an empty frame.
         None => render_waiting(f, chunks[1]),
-        Some(_) => render_body(f, chunks[1], dash, presence),
+        Some(_) => render_body(f, chunks[1], dash, presence, now_ms),
     }
 
     render_status(f, chunks[2], dash, presence, now_ms);
@@ -138,7 +138,7 @@ fn render_waiting(f: &mut Frame, area: Rect) {
     );
 }
 
-fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) {
+fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence, now_ms: u64) {
     // Asleep is rendered dimmed rather than blanked: the last known values
     // are still the most useful thing to show, and the panel backlight is
     // off anyway.
@@ -148,7 +148,7 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
     // 1024x600 panel with an 8x16 font is 75 columns by 64 rows, so comparing
     // the raw row and column counts would misidentify it as landscape.
     if area.width >= 50 && area.height >= 46 && u32::from(area.height) * 2 > u32::from(area.width) {
-        render_portrait(f, area, dash, dimmed);
+        render_portrait(f, area, dash, dimmed, now_ms);
         return;
     }
 
@@ -162,7 +162,7 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
                 Constraint::Min(0),
             ])
             .split(area);
-        widgets::cpu_panel(f, rows[0], dash, dimmed, true);
+        widgets::cpu_panel(f, rows[0], dash, dimmed, true, now_ms);
         widgets::mem_panel(f, rows[1], dash, dimmed);
         if rows[2].height >= 4 {
             widgets::net_panel(f, rows[2], dash, dimmed);
@@ -193,7 +193,7 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(rows[0]);
 
-    widgets::cpu_panel(f, top[0], dash, dimmed, !show_procs);
+    widgets::cpu_panel(f, top[0], dash, dimmed, !show_procs, now_ms);
 
     // Three panels down the right, each with room for its own history.
     let right = Layout::default()
@@ -215,11 +215,11 @@ fn render_body(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence) 
             .constraints([Constraint::Length(top[0].width), Constraint::Min(0)])
             .split(rows[1]);
         widgets::proc_panel(f, bottom[0], dash, dimmed);
-        widgets::cpu_total_panel(f, bottom[1], dash, dimmed);
+        widgets::cpu_total_panel(f, bottom[1], dash, dimmed, now_ms);
     }
 }
 
-fn render_portrait(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
+fn render_portrait(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool, now_ms: u64) {
     let compact = area.height < 56;
     let rows = Layout::vertical([
         Constraint::Length(8), // large CPU percentage and context
@@ -230,8 +230,8 @@ fn render_portrait(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
         Constraint::Length(if compact { 10 } else { 11 }), // all eight processes
     ])
     .split(area);
-    widgets::cpu_total_panel(f, rows[0], dash, dimmed);
-    widgets::cpu_panel(f, rows[1], dash, dimmed, false);
+    widgets::cpu_total_panel(f, rows[0], dash, dimmed, now_ms);
+    widgets::cpu_panel(f, rows[1], dash, dimmed, false, now_ms);
     widgets::mem_panel(f, rows[2], dash, dimmed);
     widgets::temp_panel(f, rows[3], dash, dimmed);
     widgets::net_panel(f, rows[4], dash, dimmed);

@@ -267,7 +267,8 @@ fn large_cpu_uses_machine_total_not_the_listed_process_sum() {
     for total in [Some(0.0), Some(100.0), None] {
         p.cpu.total = total;
         dash.ingest(p.clone(), 400);
-        let tile = cpu_tile(&render_at(128, 37, &dash, 400));
+        // Read once the digits have finished gliding to the new value.
+        let tile = cpu_tile(&render_at(128, 37, &dash, 400 + state::EASE_MS));
         assert_ne!(original, tile);
         assert!(tile.contains('█'));
     }
@@ -281,10 +282,12 @@ fn modest_network_traffic_is_visible_after_an_old_download_burst() {
     dash.ingest(p.clone(), 0);
     p.net.as_mut().unwrap().rx_bps = Some(50_000); // 400 kbit/s
     p.net.as_mut().unwrap().tx_bps = Some(10_000);
-    for i in 1..100 {
+    // Enough packets to push the burst's column off the widest graph.
+    let n = (128 * state::SAMPLES_PER_COLUMN) as u64;
+    for i in 1..n {
         dash.ingest(p.clone(), i * 200);
     }
-    let out = render_at(128, 37, &dash, 19_800);
+    let out = render_at(128, 37, &dash, (n - 1) * 200);
     assert!(out.contains("scale 0..64.0K/s"), "old peak still dominates");
     let network: Vec<_> = out
         .lines()
@@ -303,8 +306,11 @@ fn modest_network_traffic_is_visible_after_an_old_download_burst() {
 
     // A new burst must raise the scale immediately.
     p.net.as_mut().unwrap().rx_bps = Some(50_000_000);
-    dash.ingest(p, 20_000);
-    assert!(render_at(128, 37, &dash, 20_000).contains("scale 0..64.0M/s"));
+    dash.ingest(p, n * 200);
+    let out = render_at(128, 37, &dash, n * 200);
+    // Averaged with whatever else shares its column, a burst still lifts
+    // the scale out of the kilobytes the moment it arrives.
+    assert!(out.contains("scale 0..") && out.contains("M/s"), "{out}");
 }
 
 #[test]

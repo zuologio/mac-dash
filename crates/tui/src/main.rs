@@ -36,6 +36,15 @@ use state::Dashboard;
 /// single core mostly idle.
 const FRAME_MS: u64 = 100;
 
+/// Room for a full repaint of a 1080p grid (~20 KB) with margin, so even the
+/// largest frame goes out as one write.
+const FRAME_BUFFER_BYTES: usize = 64 * 1024;
+
+/// stdout batched per frame. `Stdout` on its own passes a frame on in 1 KiB
+/// pieces, and the Pi's console paints each piece before the next arrives;
+/// one write per frame narrows the window in which half a frame is visible.
+type Out = io::BufWriter<io::Stdout>;
+
 struct Args {
     port: u16,
     name: Option<String>,
@@ -303,7 +312,7 @@ fn run(
     result
 }
 
-fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
+fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Out>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     if std::env::var("TERM").as_deref() == Ok("linux") {
@@ -312,13 +321,14 @@ fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
         stdout.write_all(b"\x1b%G")?;
     }
     execute!(stdout, EnterAlternateScreen, crossterm::cursor::Hide)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+    let out = io::BufWriter::with_capacity(FRAME_BUFFER_BYTES, stdout);
+    let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
     terminal.clear()?;
     repaint::invalidate(&mut terminal);
     Ok(terminal)
 }
 
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Out>>) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),

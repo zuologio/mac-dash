@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Row, Sparkline, Table};
 use ratatui::Frame;
 
 use super::{big_digits, format, theme};
-use crate::state::Dashboard;
+use crate::state::{Dashboard, SAMPLES_PER_COLUMN};
 
 fn panel(title: &str, dimmed: bool) -> Block<'_> {
     Block::default()
@@ -52,7 +52,14 @@ fn bar(pct: f32, width: u16, dimmed: bool) -> Line<'static> {
     ])
 }
 
-pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool, show_total: bool) {
+pub fn cpu_panel(
+    f: &mut Frame,
+    area: Rect,
+    dash: &Dashboard,
+    dimmed: bool,
+    show_total: bool,
+    now_ms: u64,
+) {
     let block = panel("CPU", dimmed);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -61,8 +68,10 @@ pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool, show
     }
 
     let Some(pkt) = &dash.latest else { return };
-    let total = pkt.cpu.total.unwrap_or(0.0);
-    let count = (pkt.cpu.ncpu as usize).max(pkt.cpu.cores.len());
+    // Meters glide between samples; text shows the packet's exact figures.
+    let total = dash.cpu_total(now_ms).unwrap_or(0.0);
+    let cores = dash.cores(now_ms);
+    let count = (pkt.cpu.ncpu as usize).max(cores.len());
     // Four rows give each core a border, percentage and fill. Narrow windows
     // retain the compact bars rather than clipping cores off the right edge.
     let boxed = count > 0
@@ -90,13 +99,15 @@ pub fn cpu_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool, show
         );
     }
     if boxed {
-        core_boxes(f, rows[1], &pkt.cpu.cores, count, dimmed);
+        core_boxes(f, rows[1], &cores, count, dimmed);
     } else if core_height > 0 {
-        f.render_widget(Paragraph::new(core_bars(&pkt.cpu.cores, dimmed)), rows[1]);
+        f.render_widget(Paragraph::new(core_bars(&cores, dimmed)), rows[1]);
     }
     f.render_widget(Paragraph::new(bar(total, rows[2].width, dimmed)), rows[2]);
     if rows[3].height > 0 && !dash.cpu_history.is_empty() {
-        let data = dash.cpu_history.tail(rows[3].width as usize);
+        let data = dash
+            .cpu_history
+            .averaged(rows[3].width as usize, SAMPLES_PER_COLUMN);
         f.render_widget(
             Sparkline::default()
                 .data(&data)
@@ -126,7 +137,7 @@ fn cpu_context(pkt: &macdash_proto::StatsPacket, width: u16) -> String {
     text
 }
 
-fn core_boxes(f: &mut Frame, area: Rect, cores: &[f32], count: usize, dimmed: bool) {
+fn core_boxes(f: &mut Frame, area: Rect, cores: &[Option<f32>], count: usize, dimmed: bool) {
     for i in 0..count {
         // Distribute spare columns evenly, with a one-column gap per box.
         let start = (area.width as usize + 1) * i / count;
@@ -137,11 +148,7 @@ fn core_boxes(f: &mut Frame, area: Rect, cores: &[f32], count: usize, dimmed: bo
             (end - start) as u16,
             area.height,
         );
-        let value = cores
-            .get(i)
-            .copied()
-            .filter(|v| v.is_finite())
-            .map(|v| v.clamp(0.0, 100.0));
+        let value = cores.get(i).copied().flatten().map(|v| v.clamp(0.0, 100.0));
         let style = fg(dimmed, value.map(theme::scale).unwrap_or(theme::DIM));
         let block = Block::default()
             .borders(Borders::ALL)
@@ -185,10 +192,11 @@ fn core_boxes(f: &mut Frame, area: Rect, cores: &[f32], count: usize, dimmed: bo
 ///
 /// Height is carried by the glyph, so this stays readable without colour and
 /// fits a 10-core machine into ten columns.
-fn core_bars(cores: &[f32], dimmed: bool) -> Line<'static> {
+fn core_bars(cores: &[Option<f32>], dimmed: bool) -> Line<'static> {
     const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     let mut spans = vec![Span::styled("cores ", fg(dimmed, theme::DIM))];
     for &c in cores {
+        let c = c.unwrap_or(0.0);
         let idx = ((c / 100.0 * 7.0).round() as usize).min(7);
         spans.push(Span::styled(
             BLOCKS[idx].to_string(),
@@ -278,7 +286,9 @@ pub fn mem_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     }
 
     if rows[3].height > 0 && !dash.mem_history.is_empty() {
-        let data = dash.mem_history.tail(rows[3].width as usize);
+        let data = dash
+            .mem_history
+            .averaged(rows[3].width as usize, SAMPLES_PER_COLUMN);
         memory_trend(f, rows[3], &data, dimmed);
     }
 }
@@ -326,7 +336,7 @@ fn memory_trend(f: &mut Frame, area: Rect, data: &[u64], dimmed: bool) {
     }
 }
 
-pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
+pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool, now_ms: u64) {
     let block = panel("CPU TOTAL", dimmed);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -334,11 +344,8 @@ pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool
     if inner.is_empty() {
         return;
     }
-    let total = pkt
-        .cpu
-        .total
-        .filter(|v| v.is_finite())
-        .map(|v| v.clamp(0.0, 100.0));
+    // The big digits count towards each new sample rather than jumping.
+    let total = dash.cpu_total(now_ms).map(|v| v.clamp(0.0, 100.0));
     let text = format::pct(total);
     let style = fg(dimmed, total.map(theme::scale).unwrap_or(theme::DIM));
     let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
@@ -410,7 +417,9 @@ pub fn temp_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     f.render_widget(Paragraph::new(lines), rows[0]);
 
     if rows[1].height > 0 && !dash.temp_history.is_empty() {
-        let data = dash.temp_history.tail(rows[1].width as usize);
+        let data = dash
+            .temp_history
+            .averaged(rows[1].width as usize, SAMPLES_PER_COLUMN);
         // Scaled to 100C, where Apple Silicon starts throttling, so the
         // graph's height means the same thing from one machine to the next.
         f.render_widget(
@@ -474,8 +483,8 @@ pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     ])
     .split(rows[1]);
     let width = inner.width.saturating_sub(2) as usize;
-    let rx = dash.rx_history.tail(width);
-    let tx = dash.tx_history.tail(width);
+    let rx = dash.rx_history.averaged(width, SAMPLES_PER_COLUMN);
+    let tx = dash.tx_history.averaged(width, SAMPLES_PER_COLUMN);
     let scale = network_scale(&rx, &tx);
     f.render_widget(
         Paragraph::new(format!("scale 0..{}/s", format::bytes(scale)))

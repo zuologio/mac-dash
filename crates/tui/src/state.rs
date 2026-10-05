@@ -11,8 +11,20 @@ use std::collections::VecDeque;
 
 use macdash_proto::{Presence, PresenceTracker, StatsPacket};
 
-/// Samples retained for the sparklines: at 5 Hz, about 24 seconds.
-pub const HISTORY: usize = 120;
+/// Packets averaged into one graph column. Data still arrives at 5 Hz, but
+/// the graphs scroll once a second. A scroll rewrites every column, and the
+/// Pi's console paints slowly enough to be seen halfway through one (a ghost
+/// of the old graph over the new). Fewer scrolls means fewer chances to
+/// catch it, and between scrolls only the newest column changes.
+pub const SAMPLES_PER_COLUMN: usize = 5;
+
+/// Samples retained: enough for a full-width graph on a 1080p console, and
+/// about four minutes of history at the 128-column panel.
+pub const HISTORY: usize = 240 * SAMPLES_PER_COLUMN;
+
+/// How long a headline value takes to glide to a new sample. About two
+/// packets: long enough to look smooth, short enough not to look laggy.
+pub const EASE_MS: u64 = 400;
 
 pub struct Dashboard {
     pub latest: Option<StatsPacket>,
@@ -23,6 +35,8 @@ pub struct Dashboard {
     pub mem_history: Ring,
     pub temp_history: Ring,
     pub packets_received: u64,
+    cpu_total: Option<Eased>,
+    cores: Vec<Option<Eased>>,
 }
 
 impl Dashboard {
@@ -36,6 +50,8 @@ impl Dashboard {
             mem_history: Ring::new(HISTORY),
             temp_history: Ring::new(HISTORY),
             packets_received: 0,
+            cpu_total: None,
+            cores: Vec::new(),
         }
     }
 
@@ -78,7 +94,27 @@ impl Dashboard {
             }
         }
 
+        retarget(&mut self.cpu_total, packet.cpu.total, now_ms);
+        self.cores.resize_with(packet.cpu.cores.len(), || None);
+        for (eased, &v) in self.cores.iter_mut().zip(&packet.cpu.cores) {
+            retarget(eased, Some(v), now_ms);
+        }
+
         self.latest = Some(packet);
+    }
+
+    /// Machine CPU as it should be drawn right now, mid-glide.
+    pub fn cpu_total(&self, now_ms: u64) -> Option<f32> {
+        self.cpu_total.as_ref().map(|e| e.value(now_ms))
+    }
+
+    /// Per-core CPU as it should be drawn right now; `None` for a core the
+    /// agent could not measure.
+    pub fn cores(&self, now_ms: u64) -> Vec<Option<f32>> {
+        self.cores
+            .iter()
+            .map(|e| e.as_ref().map(|e| e.value(now_ms)))
+            .collect()
     }
 
     pub fn presence(&self, now_ms: u64) -> Presence {
@@ -86,10 +122,56 @@ impl Dashboard {
     }
 }
 
+/// Glide towards a new sample instead of jumping to it. `None` or a
+/// non-finite sample stops the glide, so an unknown value is shown as unknown
+/// rather than as a stale one.
+fn retarget(slot: &mut Option<Eased>, sample: Option<f32>, now_ms: u64) {
+    match (slot.as_mut(), sample.filter(|v| v.is_finite())) {
+        (Some(e), Some(v)) => e.set(v, now_ms),
+        (None, Some(v)) => *slot = Some(Eased::new(v)),
+        (_, None) => *slot = None,
+    }
+}
+
+/// A value that eases from where it is shown to its latest target.
+pub struct Eased {
+    from: f32,
+    to: f32,
+    since_ms: u64,
+}
+
+impl Eased {
+    pub fn new(v: f32) -> Self {
+        Self {
+            from: v,
+            to: v,
+            since_ms: 0,
+        }
+    }
+
+    pub fn set(&mut self, v: f32, now_ms: u64) {
+        // Start from what is on screen, not from the previous target: samples
+        // arrive before the last glide has finished.
+        self.from = self.value(now_ms);
+        self.to = v;
+        self.since_ms = now_ms;
+    }
+
+    pub fn value(&self, now_ms: u64) -> f32 {
+        let t = (now_ms.saturating_sub(self.since_ms) as f32 / EASE_MS as f32).min(1.0);
+        // Ease-out: quick to react, gentle to settle.
+        let t = 1.0 - (1.0 - t) * (1.0 - t);
+        self.from + (self.to - self.from) * t
+    }
+}
+
 /// Fixed-capacity history buffer.
 pub struct Ring {
     items: VecDeque<u64>,
     cap: usize,
+    /// Samples ever pushed. Pins column boundaries to absolute sample
+    /// numbers, so evicting the oldest sample never regroups the rest.
+    pushed: u64,
 }
 
 impl Ring {
@@ -97,6 +179,7 @@ impl Ring {
         Self {
             items: VecDeque::with_capacity(cap),
             cap,
+            pushed: 0,
         }
     }
 
@@ -105,6 +188,36 @@ impl Ring {
             self.items.pop_front();
         }
         self.items.push_back(v);
+        self.pushed += 1;
+    }
+
+    /// The newest `n` columns, oldest first, each the mean of `group`
+    /// consecutive samples. The newest column holds however many samples of
+    /// its group have arrived, so it is live; every other column only moves
+    /// when a new group starts. A partly evicted oldest group is dropped
+    /// rather than shown as if it were complete.
+    pub fn averaged(&self, n: usize, group: usize) -> Vec<u64> {
+        let group = group.max(1) as u64;
+        let first = self.pushed - self.items.len() as u64;
+        let mut out: Vec<u64> = Vec::new();
+        let (mut sum, mut count) = (0u128, 0u128);
+        let mut current = None;
+        for (k, &v) in (first..).zip(&self.items) {
+            let g = k / group;
+            if current != Some(g) {
+                out.extend(sum.checked_div(count).map(|m| m as u64));
+                (sum, count) = (0, 0);
+                current = Some(g);
+            }
+            if g * group < first {
+                continue; // partly evicted
+            }
+            sum += v as u128;
+            count += 1;
+        }
+        out.extend(sum.checked_div(count).map(|m| m as u64));
+        let skip = out.len().saturating_sub(n);
+        out.split_off(skip)
     }
 
     pub fn last(&self) -> Option<u64> {
@@ -115,7 +228,8 @@ impl Ring {
         self.items.is_empty()
     }
 
-    /// The most recent `n` values, oldest first — what a sparkline draws.
+    /// The most recent `n` values, oldest first.
+    #[cfg(test)]
     pub fn tail(&self, n: usize) -> Vec<u64> {
         let skip = self.items.len().saturating_sub(n);
         self.items.iter().skip(skip).copied().collect()
@@ -178,6 +292,98 @@ mod tests {
     }
 
     #[test]
+    fn averaged_groups_samples_into_columns() {
+        let mut r = Ring::new(100);
+        for v in [10, 20, 30, 40, 50, 60, 70] {
+            r.push(v);
+        }
+        // Two packets into the second column: it shows what has arrived so far.
+        assert_eq!(r.averaged(10, 5), vec![30, 65]);
+        assert_eq!(r.averaged(1, 5), vec![65], "keeps the newest columns");
+    }
+
+    /// The point of grouping: the graph scrolls once per group, not once per
+    /// sample. In between, only the newest column changes.
+    #[test]
+    fn averaged_scrolls_once_per_group() {
+        let mut r = Ring::new(1000);
+        for v in 0..100 {
+            r.push(v * 7 % 13);
+        }
+        let mut scrolls = 0;
+        for v in 100..150 {
+            let before = r.averaged(10, 5);
+            r.push(v * 7 % 13);
+            let after = r.averaged(10, 5);
+            if before[..before.len() - 1] != after[..after.len() - 1] {
+                scrolls += 1;
+            }
+        }
+        assert_eq!(
+            scrolls, 10,
+            "50 samples in groups of 5 should scroll 10 times"
+        );
+    }
+
+    /// Groups are pinned to the absolute sample count, so evicting the oldest
+    /// sample never regroups everything after it.
+    #[test]
+    fn averaged_skips_a_partly_evicted_group() {
+        let mut r = Ring::new(6);
+        for v in [1, 1, 1, 9, 9, 9, 9, 9] {
+            r.push(v);
+        }
+        // Survivors are samples 2..8: sample 2 is all that is left of group
+        // 0, so it is dropped rather than averaged as if it were complete.
+        assert_eq!(r.averaged(10, 5), vec![9]);
+    }
+
+    #[test]
+    fn eased_values_glide_to_the_new_sample() {
+        let mut e = Eased::new(20.0);
+        assert_eq!(e.value(0), 20.0);
+        e.set(80.0, 1_000);
+        assert_eq!(e.value(1_000), 20.0, "starts where it was");
+        let mid = e.value(1_000 + EASE_MS / 2);
+        assert!(20.0 < mid && mid < 80.0, "mid-way was {mid}");
+        assert_eq!(e.value(1_000 + EASE_MS), 80.0);
+        assert_eq!(e.value(1_000 + EASE_MS * 10), 80.0, "never overshoots");
+    }
+
+    /// Samples arrive faster than the ease finishes. Retargeting must start
+    /// from what is on screen, or the value would jump back first.
+    #[test]
+    fn retargeting_starts_from_the_displayed_value() {
+        let mut e = Eased::new(0.0);
+        e.set(100.0, 0);
+        let shown = e.value(EASE_MS / 2);
+        e.set(0.0, EASE_MS / 2);
+        assert_eq!(e.value(EASE_MS / 2), shown);
+    }
+
+    #[test]
+    fn dashboard_eases_cpu_and_drops_missing_values() {
+        let mut d = Dashboard::new();
+        let mut p = packet(Some(10.0), None);
+        p.cpu.cores = vec![10.0, f32::NAN];
+        d.ingest(p.clone(), 0);
+        assert_eq!(d.cpu_total(0), Some(10.0), "first sample is not animated");
+        assert_eq!(d.cores(0), vec![Some(10.0), None]);
+
+        p.cpu.total = Some(90.0);
+        p.cpu.cores = vec![90.0, 50.0];
+        d.ingest(p.clone(), 200);
+        let mid = d.cpu_total(200 + EASE_MS / 2).unwrap();
+        assert!(10.0 < mid && mid < 90.0, "mid-way was {mid}");
+        assert_eq!(d.cpu_total(200 + EASE_MS), Some(90.0));
+        assert_eq!(d.cores(200 + EASE_MS), vec![Some(90.0), Some(50.0)]);
+
+        p.cpu.total = None;
+        d.ingest(p, 400);
+        assert_eq!(d.cpu_total(400), None, "unknown must not show an old value");
+    }
+
+    #[test]
     fn tail_handles_short_history() {
         let mut r = Ring::new(100);
         r.push(1);
@@ -225,7 +431,7 @@ mod tests {
     #[test]
     fn history_stays_bounded_over_a_long_run() {
         let mut d = Dashboard::new();
-        for i in 0..1000 {
+        for i in 0..(HISTORY as u64 * 2) {
             d.ingest(packet(Some(i as f32 % 100.0), Some(i)), i * 200);
         }
         assert_eq!(d.cpu_history.tail(usize::MAX).len(), HISTORY);
@@ -284,7 +490,7 @@ mod tests {
     #[test]
     fn new_histories_stay_bounded() {
         let mut d = Dashboard::new();
-        for i in 0..1000 {
+        for i in 0..(HISTORY as u64 * 2) {
             d.ingest(packet(Some(1.0), Some(i)), i * 200);
         }
         assert_eq!(d.mem_history.tail(usize::MAX).len(), HISTORY);
