@@ -4,8 +4,8 @@
 
 **Your Mac's vitals, live on a second screen.**
 
-A metrics agent for macOS and a terminal dashboard for a Raspberry Pi, talking
-over your LAN. Point a small display at it and leave it running.
+A tiny metrics agent for macOS and a terminal dashboard for a Raspberry Pi,
+talking over your LAN. Plug a small display into the Pi and leave it running.
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-b7410e.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/mac-Apple%20Silicon-black.svg)](#)
@@ -22,456 +22,215 @@ over your LAN. Point a small display at it and leave it running.
 │cores ▂▂▁▁▁▁▂▂▁▁                                                        ││pressure 58%  compressed 6.3G  swap 11.9G / 13.0G   │
 │                                                                        ││                                                    │
 │                                                                        ││██████████████████████████                          │
-│                                                                        ││██████████████████████████                          │
-│                                                                        ││██████████████████████████                          │
 │                                                                        │└────────────────────────────────────────────────────┘
 │                                                                        │┌ THERMAL ───────────────────────────────────────────┐
 │                                                                        ││ 41.4°C  SoC                                        │
 │                                                                        ││ 32.0°C  batt                                       │
-│                                                                        ││                                                    │
-│                                                                        ││▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁                          │
-│                                                                        ││██████████████████████████                          │
 │                                                                        │└────────────────────────────────────────────────────┘
 │                                                                        │┌ NETWORK ───────────────────────────────────────────┐
-│▅                                                                       ││▼ 5.0K/s   ▲ 5.0K/s                                 │
-│█                                                                       ││█                                                   │
-│█       ▁                                                               ││█▂▂ ▆▆▄   ▂▂     ▄▄▂▂▄▄▂▂▂                          │
-│█     ▆ █            ▆▆                                                 ││█                                                   │
+│█       ▁                                                               ││▼ 5.0K/s   ▲ 5.0K/s                                 │
+│█     ▆ █            ▆▆                                                 ││█▂▂ ▆▆▄   ▂▂     ▄▄▂▂▄▄▂▂▂                          │
 │█▄▄ ▅▇█ █▁   ▁   ▇▇▁▁██▅▅▁                                              ││█▂  ▂      ▂ ▂▂  ▂▂▂▂▄▄▂▂▂                          │
 │███▄███▃██▄▇▆█▄▄▄█████████                                              ││session  ▼ 379M   ▲ 2.9G                            │
 └────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
 ┌ TOP PROCESSES ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Docker Desktop Helper (R    25.3%  92.8M  ▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
 │claude                      14.9%   261M  ▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
-│opencode                     5.0%   161M  ▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
 │Code                         4.2%   107M  ▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
-│Code Helper                  3.8%  58.8M  ▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
-│com.apple.Virtualization     3.6%   406M  ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
-│com.docker.backend           2.6%   106M  ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
-│opencode                     2.1%   118M  ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱                                            │
-│                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  LIVE en0 26 pkts  q quit
 ```
 
-<div align="center"><sub>Live output, unedited.</sub></div>
+**Shows:** CPU (total, per core, user/system, load) · memory (used, pressure,
+compressed, swap) · SoC and battery temperature · network throughput · top 8
+processes · the Mac's clock.
+
+**Costs:** about 0.012% of one Mac core, 5 MB of RAM and 37 kbps on the network.
+No sudo needed. The Pi binary is a single 700 KB static file.
 
 ---
 
-## What it costs
-
-Measured on an M5 with `proc_pid_rusage`, the kernel's own nanosecond CPU
-accounting:
-
-| | |
-|---|---|
-| **Mac CPU** | **0.012%** of one core — 7.4 ms per minute |
-| **Network** | **37 kbps** — 900-byte snapshots at 5 Hz |
-| **Mac memory** | 5.4 MB resident |
-| **Pi binary** | 695 KB, statically linked, no runtime |
-
-`ps` will tell you 0.5%. It rounds a few milliseconds up to a full 10 ms tick;
-the number above is the real one.
-
-## How the two ends find each other
-
-Both machines are on DHCP, so neither address is stable. Rather than pinning
-one down, the Pi announces itself and the Mac listens:
-
-```
-  Pi Zero                                      Mac
-     │                                          │
-     │  ── "I'm here" ──────────────────────▶   │   multicast, every 3 s
-     │                                          │
-     │  ◀────────────────────── stats JSON ──   │   unicast, every 200 ms
-     │                                          │
-```
-
-The Mac takes the Pi's address from the packet's source, never from its
-contents — a host with several interfaces will misreport its own address, but
-the source address is always the truth.
-
-**Everything recovers on its own.** New DHCP lease, Pi reboot, Mac restart, WiFi
-blip: the next beacon repairs it within 3 seconds. There is no config file
-holding an address that goes stale, no mDNS dependency, and no connection state
-machine on either side.
-
-**Every datagram is a complete snapshot, never a delta.** That is what makes UDP
-the right choice here rather than a compromise — a lost packet costs 200 ms of
-staleness and fixes itself, so there is nothing to retransmit, sequence, or
-reconnect.
-
-Multiple displays work with no extra configuration: the Mac streams to every
-beacon it hears. A second screen is a second Pi running the same binary.
-
 ## Quick start
 
-**On the Mac:**
+### 1. Try it without installing
 
-```bash
-git clone <your-repo-url> && cd macdash
-./deploy/install-mac.sh          # builds + installs a launchd agent
-```
-
-**On the Pi** (needs Docker on the Mac for the ARMv6 toolchain):
-
-```bash
-cargo install cross --git https://github.com/cross-rs/cross
-./deploy/build-pi.sh                        # --zero2 for a Pi Zero 2 W
-./deploy/install-pi.sh pi@192.168.0.148
-```
-
-That's it — the dashboard comes up on `tty1` at boot, with no keyboard
-attached, and finds the Mac by itself.
-
-To try it before installing anything, run both halves by hand:
+Both machines need to be on the same LAN. Run each half in a terminal:
 
 ```bash
 cargo run --release -p macdash-agent      # on the Mac
-cargo run --release -p macdash-tui        # anywhere on the same LAN
+cargo run --release -p macdash-tui        # on any machine on the LAN, even the Mac itself
 ```
 
-The installer preserves an existing custom console font unless you pass
-`--font` or `--ttf`. Font bitmaps and their Unicode map are loaded together
-before the first frame. Diagnostics go to the journal, not to the dashboard.
+The two halves find each other on their own, with no IP addresses to configure.
+Press `q` to quit.
 
-For the **7-inch 1024×600 display**, use `Lat15-Terminus16`: its 8×16-pixel
-cells give a 128×37 grid, enough for CPU, memory, thermal, network and all
-eight processes. This is the default for new installations. The larger
-16×32 font used on a 1080p monitor gives only 64×18 on this panel, triggering
-the reduced layout.
-
-To resize an existing installation without restarting the dashboard, copy
-`deploy/fit-7-inch-display.sh` and `deploy/make-console-font.py` into the same
-directory on the Pi, then run `sudo bash fit-7-inch-display.sh` there. It
-loads the smaller patched font live, preserves history, and saves the font
-for future boots. The previous installed font is backed up as
-`/usr/local/share/consolefonts/macdash.psf.before-7-inch`.
-
-### Portrait enclosure
-
-Turning the physical panel **90° clockwise** puts its right-hand connectors
-at the bottom. Rotate the console image **counterclockwise** to compensate:
-Linux's framebuffer console uses `3` for this orientation. With the existing
-8×16 font, the 600×1024 view is **75 columns × 64 rows**. The dashboard detects
-the taller grid and stacks the large CPU percentage, CPU history, memory,
-thermal, network and all eight processes vertically.
-
-Install normally with portrait orientation and HDMI sleep enabled:
+### 2. Install the agent on the Mac
 
 ```bash
-./deploy/build-pi.sh
-./deploy/install-pi.sh user@pi-host --portrait --hdmi --font Lat15-Terminus16
+./deploy/install-mac.sh
 ```
 
-The installer saves the orientation in a systemd drop-in and applies it before
-the dashboard starts, including after reboot. The font option ensures the
-75×64 grid. No separate rotation command or reboot is needed. Later installs
-preserve the orientation unless `--landscape`, `--landscape-flipped` or `--portrait` is supplied;
-continue passing `--hdmi` to retain automatic display sleep. To return to
-landscape, use the same binary with the other flag:
+This builds the agent and installs it as a launchd agent, so it starts at login
+and keeps running in the background.
+
+### 3. Install the dashboard on the Pi
+
+Building for the Pi needs Docker on the Mac and the `cross` tool:
 
 ```bash
-./deploy/install-pi.sh user@pi-host --landscape --hdmi --font Lat15-Terminus16
+cargo install cross --git https://github.com/cross-rs/cross
+./deploy/build-pi.sh                       # add --zero2 for a Pi Zero 2 W
+./deploy/install-pi.sh pi@192.168.0.148
 ```
 
-Both orientations show the same metrics and all eight processes. In landscape
-the ten core boxes sit in one row above the upper-left CPU history, and the
-large CPU percentage sits at bottom right. Switching back requires only
-replacing `--landscape` with `--portrait`; no branch change or rebuild is needed
-unless the code has changed. Installation restarts the dashboard, so its
-rolling history starts fresh.
+The dashboard now starts on the Pi's screen at boot, with no keyboard needed,
+and finds the Mac by itself. Run the same two commands again to update it.
 
-To mount the panel upside down with the HDMI and USB connectors at bottom
-left, select landscape rotated 180°:
+## Install options
+
+Pass any of these to `install-pi.sh`. They are saved in the service, so pass
+them again on later installs to keep them.
+
+| Option | What it does |
+|---|---|
+| `--hdmi` | Turn the HDMI screen off while the Mac's display sleeps |
+| `--backlight <path>` | Same, for panels with a Linux backlight device, e.g. `/sys/class/backlight/rpi_backlight` |
+| `--theme <name>` | Colour scheme (see [Themes](#themes)) |
+| `--portrait` | Panel turned 90° clockwise, connectors at the bottom |
+| `--landscape-flipped` | Panel upside down, connectors at the bottom left |
+| `--landscape` | Back to normal orientation |
+| `--font <name>` | Console font. The default `Lat15-Terminus16` fits a 1024×600 panel; use `Lat15-Terminus32x16` for larger text on a 1080p screen |
+| `--ttf <file>` `--ttf-size <px>` | Turn your own `.ttf`/`.otf` into the console font (needs `freetype-py`) |
+| `--mac <ip>` | Also announce directly to this Mac. Use it if the screen stays on `WAITING` (some Wi-Fi routers block multicast). The installer fills this in automatically |
+| `--zero2` | Install the Pi Zero 2 W build |
+
+A typical setup for a 7-inch HDMI panel:
 
 ```bash
-./deploy/install-pi.sh user@pi-host --landscape-flipped --hdmi --font Lat15-Terminus16
+./deploy/install-pi.sh pi@192.168.0.148 --hdmi --theme quiet
 ```
 
-This keeps the same landscape layout and saves the rotation across service
-restarts and reboots. Use `--landscape` to return to normal orientation.
+Orientation and font choices are kept on later installs unless you pass a new one.
 
-For an optional timed preview without replacing the installed dashboard or changing boot settings,
-build the Pi binary, copy it under a temporary name along with the preview
-script, and run the script over SSH. Replace `user@pi-host` below:
+## Themes
 
-```bash
-./deploy/build-pi.sh
-scp target/arm-unknown-linux-musleabihf/release/macdash-tui user@pi-host:/tmp/macdash-portrait
-scp deploy/preview-portrait.sh user@pi-host:/tmp/
-ssh -t user@pi-host 'sudo bash /tmp/preview-portrait.sh 120'
-```
+| Theme | Normal | Warning | Critical |
+|---|---|---|---|
+| `classic` (default) | blue (`#5293E1`) | yellow | red |
+| `traffic` | green | amber | red |
+| `quiet` | plain white, so colour only appears when something is wrong | amber | red |
+| `thermal` | teal | warm amber | red-orange |
+| `phosphor` | dark amber | bright amber | red-orange |
 
-The preview runs for two minutes (10–600 seconds accepted). It temporarily
-stops the installed service, starts the new binary with the same arguments
-in a transient systemd unit, and restores the previous orientation and
-installed service when the timer expires or you press Ctrl-C. Metrics history
-starts fresh at each service change. Keep the Mac awake to inspect the layout;
-the preview retains the existing HDMI sleep setting. The kernel must expose
-`/sys/class/graphics/fbcon/rotate`.
+Press **`t`** while the dashboard is running to cycle through them, then set your
+favourite with `--theme`. On the Pi's console, all themes except `classic`
+show their exact colours; `classic` keeps the console's own yellow and red.
 
-The layout also switches automatically when the console is rotated live.
-For rotation alone, `sudo sh -c 'echo 3 > /sys/class/graphics/fbcon/rotate'`
-selects portrait and `echo 0` to the same file returns to landscape. These
-runtime settings do not change the boot configuration. See the
-[Linux framebuffer console documentation](https://docs.kernel.org/fb/fbcon.html).
+## Using it
 
-### Service startup
+**Keys:** `t` cycles themes · `q`, `Esc` or `Ctrl-C` quits.
 
-At boot, `macdash.timer` queues the service after `multi-user.target`,
-`cloud-final.service` and console setup have finished. The timer avoids an
-ordering cycle with cloud-init. Restart the display with
-`sudo systemctl restart macdash`; inspect both units with
-`systemctl status macdash macdash.timer`.
+**Status line** at the bottom left:
 
-The display learns the agent's current address from incoming stats and sends
-beacons directly there as well as to multicast and any configured `--mac`
-address. This keeps a stale DHCP address in the installer configuration from
-interrupting an established stream. The Pi setup also disables Wi-Fi power
-saving for its active wireless connection without reconnecting it.
+| Status | Meaning | Screen |
+|---|---|---|
+| `LIVE` | data is arriving | normal |
+| `DISPLAY OFF` | the Mac's display is asleep | screen off (with `--hdmi`/`--backlight`), values current |
+| `STALE` | no data for 1–10 s | values dimmed |
+| `ASLEEP` | no data for over 10 s | screen off, values dimmed |
+| `WAITING` | no Mac found yet | see [Troubleshooting](#troubleshooting) |
 
-## Watching over SSH
-
-The dashboard is just a terminal program, so it runs in an SSH session as
-easily as on the panel:
+**Watch over SSH** alongside the panel. The agent streams to every display it
+finds, so both stay live:
 
 ```bash
 ssh pi@192.168.0.148
-macdash-tui --port 0        # --port 0 if the service is already running
+macdash-tui --port 0      # --port 0 because the service already uses port 9999
 ```
 
-`--port 0` matters once you have installed the service: it already holds 9999,
-and the OS picks a free port instead. The agent streams to **every** display it
-discovers, so your SSH view and the panel both show live data at the same time
-— which also makes this the easy way to check the system before the screen
-arrives.
+**Several screens** work with no extra setup: install on another Pi.
 
-Press `q` to quit; the service keeps running.
+**Reading the numbers:** the big CPU figure is the whole machine (0–100%).
+Process percentages count one core as 100%, so they can add up to more than
+the big figure. Network rates are in bytes per second (`K` = 1024 bytes).
 
-To check it works without a terminal at all — over a pipe, or from a script —
-render a single frame as plain text:
+## Troubleshooting
+
+**The screen stays on `WAITING`.** Make sure the agent is running on the Mac
+(`launchctl list | grep macdash`). If it is, your router is probably blocking
+multicast. Reinstall with `--mac <your Mac's IP>`, or start the agent with
+`--target <pi-ip>`.
+
+**The screen is blank, with no dashboard and no login prompt.** This means an
+install failed partway. To give the console back to a login prompt and try the
+dashboard again:
 
 ```bash
-cargo run -p macdash-tui --example snapshot
+./deploy/fix-pi-console.sh pi@192.168.0.148
 ```
 
-## When the Mac sleeps
+**Bars and graphs show as `#`.** The console font failed to load. Reinstall
+without `--font` to rebuild the default one.
 
-The dashboard already knows how long it has been since the last packet — that
-is what the staleness indicator is. Sleep detection is the same clock read
-against a longer threshold:
+**The layout is cramped or panels are missing.** The font is too large for the
+panel. Reinstall with `--font Lat15-Terminus16`.
 
-| Signal | State | Screen |
-|---|---|---|
-| packets flowing | `LIVE` | normal |
-| Mac's display asleep | `DISPLAY OFF` | **backlight off**, values current |
-| silence 1–10 s | `STALE` | values dimmed; an already sleeping display stays off |
-| silence > 10 s | `ASLEEP` | **backlight off**, values dimmed |
-
-A Mac on AC power is often set never to sleep, in which case the silence this
-once relied on never arrives — the screen goes dark, you walk away, and the
-panel stays lit all evening. The agent reports its display state directly, so
-the panel follows the screen rather than the machine.
-
-A packet reporting the Mac's display awake restores the output. Packets that
-still report display sleep keep it off. Older agents without a display-state
-field restore it on any packet. The dashboard keeps receiving and recording
-metrics while the screen is off.
-
-For an HDMI panel on the Pi's **VC4/KMS framebuffer console**, enable HDMI
-standby:
+**Restart or inspect the service on the Pi:**
 
 ```bash
-./deploy/build-pi.sh
-./deploy/install-pi.sh <user@pi-host> --hdmi
+sudo systemctl restart macdash
+systemctl status macdash macdash.timer
+journalctl -u macdash -b
 ```
 
-This writes `4` (power down) or `0` (restore) to
-`/sys/class/graphics/fb0/blank`. The LAFVIN 7-inch HDMI panel was checked with
-this method: it goes fully dark and the dashboard returns when output resumes.
-The panel may show “No signal” before its own standby delay expires. HDMI
-standby does not set a brightness percentage: set the panel's physical
-brightness control to 100% if that is the level you want when it wakes.
+**Temperature is missing.** It uses a private macOS API that a future macOS
+might break. Every other metric keeps working.
+`macdash-agent --list-sensors` shows the raw sensor data.
 
-The dashboard skips drawing while HDMI is off, repaints on wake, and retries
-failed power transitions once a second. Output is restored on exit; the
-installer also adds a systemd stop action to restore it after a crash or
-service stop. This option targets `fb0` and requires write access to its
-`blank` file (the installed service runs as root).
-
-For a panel with a Linux backlight device, use:
-
-```bash
-./deploy/install-pi.sh pi@192.168.0.148 --backlight /sys/class/backlight/rpi_backlight
-```
-
-The backlight option restores the brightness you had set, not the maximum.
-Without either option, display power control is disabled. Pass `--hdmi` again
-on subsequent installations to keep HDMI standby enabled.
-
-One honest limitation: a WiFi dropout looks exactly like a sleeping Mac. For a
-screen on your desk, a dark panel is the right answer to both.
-
-## What it shows
-
-**CPU** total and per-core, user/system split, load averages against core
-count, up to 24 seconds of retained samples at 5 Hz · **Memory** used/total,
-macOS memory pressure, compressed, swap against its limit, with history · **Network** up/down
-throughput and session totals on the interface that actually carries the
-traffic · **Thermal** SoC and battery temperature with history
-· **Processes** top 8 by CPU · **Clock** taken from the Mac, because a Pi has
-no battery-backed clock of its own
-
-On the 7-inch display, per-core usage appears in a single row of numbered
-boxes, with a percentage and fill bar in each. Green indicates below 60%,
-yellow 60–84%, and red 85% or higher. Small terminal windows fall back to
-compact core bars. The CPU summary shows user/system usage and load averages;
-the history panel does not repeat those numbers.
-
-In landscape, the process table aligns with the CPU history above it.
-The lower-right panel shows overall CPU usage as large block digits, using
-the existing console font; in portrait this panel sits at the top. Its 0–100% value is the fraction of the whole
-machine's CPU capacity in use; process percentages use one core as 100% and
-must not be summed to obtain this figure.
-
-Network graphs share a labeled scale based on the visible samples, rounded
-up in powers of two with a 1 KiB/s minimum. The scale rises with traffic and
-falls when a burst leaves the visible window. Rates are bytes per second
-(`K` means 1024 bytes), so 400 kbit/s is about 49K/s. The RAM meter retains its
-absolute used/total scale; below it, a thin history line shows changes in RAM
-used with explicit zoom bounds and a minimum 256 MiB range. Each chart shows
-as many recent samples as its width permits, at one sample per column.
-
-Temperature on Apple Silicon has no documented unprivileged interface —
-`powermetrics` wants root. macdash reads the same private `IOHIDEventSystemClient`
-API that macmon and Stats use, so **nothing here needs sudo**. It is quarantined
-behind a `Result`: if a future macOS breaks it, temperature reads `null` and
-every other metric keeps flowing. `macdash-agent --list-sensors` dumps the raw
-sensor names when you need to see why.
-
-## Getting to 0.012%
-
-The first working version cost **22% of a core** — 1800× the final figure. Not
-from the metrics you would suspect:
-
-```
-temp     44660 µs   ← 99.6% of the time
-procs      959 µs
-net         43 µs
-cpu         12 µs
-mem          2 µs
-```
-
-Temperature was the entire budget. A Mac exposes 45 thermal sensors and each
-read is a blocking ~500 µs IOKit round trip, so polling all of them at 5 Hz
-cost 44 ms per sample — a thousand times everything else combined. The process
-table, which the design had predicted would dominate, was never the problem.
-
-Two changes fixed it. **Read 5 sensors, not 45**: the dashboard displays one SoC
-number, so reading 23 die sensors to take their maximum spends 22 round trips on
-resolution nobody sees. **Read them every 2 seconds, not 5 times a second**: a
-CPU die is a thermal mass, and the heatsink it is bonded to takes tens of
-seconds to move. A 2-second-old temperature is indistinguishable on screen from
-a fresh one.
-
-The lesson worth keeping: the expensive metric was the one nobody thought to
-measure, and it was invisible until the whole loop was profiled rather than
-reasoned about.
-
-## Design
-
-```
-crates/proto/   wire types + presence state machine   ──┐
-crates/agent/   → macOS: Mach, IOKit, libproc         ─┤  both compile
-crates/tui/     → Pi: ratatui + crossterm             ─┘  against proto
-```
-
-Rust on both ends for one reason that outweighs preference: the target is ARMv6
-with 512 MB and no package manager worth using. A static musl binary is a single
-file you copy and run.
-
-The shared `proto` crate means encoder and decoder come from the same struct
-definitions — a field renamed on one side is a compile error, not a `null` that
-shows up on screen three days later. It also carries a test that serializes a
-worst-case packet and fails the build if it exceeds 1400 bytes, so the "one
-datagram, no fragmentation" guarantee is enforced rather than documented.
-
-[ANALYSIS.md](ANALYSIS.md) has the full design: transport alternatives and why
-they lost, the counter-delta edge cases, and the reasoning behind each
-constant.
-
-## If the screen is blank
-
-The dashboard and a login prompt cannot both own tty1, so the installer masks
-`getty@tty1` — but only *after* confirming macdash started. If that ordering is
-broken (or an install fails midway), tty1 ends up with nothing attached: no
-dashboard, no prompt, just the boot log and then silence. The Pi is still fine
-over SSH; only the attached screen is dead.
-
-```bash
-./deploy/fix-pi-console.sh g10@192.168.0.148
-```
-
-That gives the console back to a login prompt, tries macdash again, and hands
-tty1 over only if the service actually comes up.
-
-## Gotchas found the hard way
-
-**macOS multicast needs a per-interface join.** Joining via `INADDR_ANY` binds
-to one kernel-chosen interface. With a VPN up, that is often not your LAN — and
-the failure is silent: the socket binds, the join succeeds, and no packet ever
-arrives. Both sides now join and send per-interface.
-
-**A VPN can capture the default route.** The agent asks the routing table which
-interface reaches the *display*, then prefers a physical one over a `utun`
-tunnel — otherwise it reports the tunnel's near-zero counters on a busy machine.
-
-**Counters lie across sleep.** After suspend, elapsed time is hours while the
-counters barely moved. Any gap over 2 seconds is discarded and the baseline
-reseeded, which is why you do not get a garbage spike on the graph at exactly
-the moment you walk back to your desk.
-
-**Never mask getty before the replacement works.** Masking `getty@tty1` and
-starting the dashboard look like one step, but if the second half fails the
-console has no owner at all — and the symptom (a blank screen) gives no hint
-that a login prompt was disabled. Confirm the new owner is running, then take
-the console away.
-
-**Mach ticks are not nanoseconds.** On Apple Silicon the timebase is 125/3.
-Treating raw ticks as nanoseconds overstates every process's CPU by ~41×.
-
-## Tests
-
-```bash
-cargo test --workspace     # 78 tests
-```
-
-The valuable ones are pure logic and need no hardware: counter-delta edge cases
-(wraparound, zero elapsed, the sleep gap), the packet size budget, presence
-transitions including the backlight, and TUI layout rendered at sizes from
-128×37 down to 1×1 — because a layout panic on a headless Pi with no keyboard
-means a power cycle.
-
-```bash
-cargo run --release -p macdash-agent --example bench      # where the time goes
-cargo run --release -p macdash-agent --once               # one snapshot as JSON
-cargo run --release -p macdash-tui --example snapshot     # one frame as text
-```
+**Check without a terminal:** `cargo run -p macdash-tui --example snapshot`
+renders one frame as plain text, and `macdash-agent --once` prints one snapshot
+as JSON.
 
 ## Reference
 
-**Agent** `--target <ip>` fixed destination · `--interval <ms>` sample rate
-· `--once` one JSON snapshot · `--list-sensors` raw thermal dump · `-v` log
-discovery
+**`macdash-agent`** (Mac)
 
-**Display** `--hdmi` HDMI standby on sleep (VC4/KMS, fb0) ·
-`--backlight <path>` panel to darken on sleep · `--name <label>`
-identify in agent logs · `--port <n>` listen port · `--no-beacon` disable
-announcements
+| Flag | |
+|---|---|
+| `--target <ip[:port]>` | Also stream to a fixed address (repeatable) |
+| `--interval <ms>` | Sampling interval (default 200) |
+| `--once` | Print one snapshot as JSON and exit |
+| `--list-sensors` | Dump raw thermal sensors |
+| `-v` | Log discovery and send counts |
 
-**Ports** 9998/udp beacon (multicast 239.255.42.99) · 9999/udp stats (unicast).
-Both TTL-limited to the local network.
+**`macdash-tui`** (display)
+
+| Flag | |
+|---|---|
+| `--theme <name>` | `classic`, `traffic`, `quiet`, `thermal`, `phosphor` |
+| `--hdmi` | HDMI off while the Mac's display sleeps (VC4/KMS, `fb0`) |
+| `--backlight <path>` | Backlight to darken while the Mac sleeps |
+| `--font <path>` | Console font to load before drawing |
+| `--mac <ip>` | Also announce directly to this Mac |
+| `--port <n>` | Listen port (default 9999; `0` picks any free port) |
+| `--name <label>` | Name shown in the agent's logs |
+| `--no-beacon` | Don't announce (use with the agent's `--target`) |
+
+**Network:** 9998/udp for discovery (multicast `239.255.42.99`, sent by the Pi
+every 3 s) and 9999/udp for stats (unicast, sent by the Mac every 200 ms). Both
+stay on the local network.
+
+## Development
+
+```bash
+cargo test --workspace
+cargo run --release -p macdash-agent --example bench     # where the agent's time goes
+```
+
+The code is three crates: `proto` (wire format, shared by both sides), `agent`
+(macOS) and `tui` (the display). [ANALYSIS.md](ANALYSIS.md) covers the design:
+why UDP and beacons, how the CPU cost went from 22% to 0.012%, sleep detection
+and the edge cases.
 
 ## License
 
