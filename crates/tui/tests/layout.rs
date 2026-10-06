@@ -609,9 +609,9 @@ fn portrait_core_boxes_share_one_row_and_reflect_each_core() {
         }
     }
     for (index, color) in [
-        (1, ui::theme::OK),
-        (3, ui::theme::WARN),
-        (5, ui::theme::CRIT),
+        (1, ui::theme::ok()),
+        (3, ui::theme::warn()),
+        (5, ui::theme::crit()),
     ] {
         assert_eq!(buf[(starts[index] + 1, y + 2)].fg, color);
     }
@@ -638,7 +638,7 @@ fn portrait_core_boxes_share_one_row_and_reflect_each_core() {
     term.draw(|f| ui::render(f, &d, 10_000)).unwrap();
     assert_eq!(
         term.backend().buffer()[(starts[5] + 1, y + 2)].fg,
-        ui::theme::DIM
+        ui::theme::dim()
     );
 }
 

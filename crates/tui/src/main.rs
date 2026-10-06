@@ -57,6 +57,8 @@ struct Args {
     /// Macs to announce to directly, for networks where the access point
     /// drops multicast between wireless and wired clients.
     macs: Vec<SocketAddr>,
+    /// Index into `ui::theme::THEMES`.
+    theme: usize,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -68,6 +70,7 @@ fn parse_args() -> Result<Args, String> {
         no_beacon: false,
         font: None,
         macs: Vec::new(),
+        theme: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -81,6 +84,11 @@ fn parse_args() -> Result<Args, String> {
             "--hdmi" => args.hdmi = true,
             "--no-beacon" => args.no_beacon = true,
             "--font" => args.font = Some(it.next().ok_or("--font needs a path")?),
+            "--theme" => {
+                let v = it.next().ok_or("--theme needs a name")?;
+                args.theme = ui::theme::by_name(&v)
+                    .ok_or_else(|| format!("unknown theme: {v} (try {})", theme_names()))?;
+            }
             "--mac" => {
                 let v = it.next().ok_or("--mac needs an address")?;
                 let with_port = if v.contains(':') {
@@ -99,6 +107,14 @@ fn parse_args() -> Result<Args, String> {
         }
     }
     Ok(args)
+}
+
+fn theme_names() -> String {
+    ui::theme::THEMES
+        .iter()
+        .map(|t| t.name)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn print_help() {
@@ -125,13 +141,16 @@ OPTIONS:
                         /usr/local/share/consolefonts/macdash.psf. Without it
                         the bars render as '#' on a Linux console, which has
                         no partial-block glyphs of its own.
+    --theme <name>      Colour scheme: {} (default classic)
     --no-beacon         Do not announce; only useful when the agent was
                         started with a matching --target
     -h, --help          Show this help
 
 KEYS:
+    t                   Cycle colour themes
     q, Esc, Ctrl-C      Quit",
-        env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION"),
+        theme_names()
     );
 }
 
@@ -173,6 +192,8 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    ui::theme::select(args.theme);
 
     if !args.no_beacon {
         beacon::spawn(port, args.name.clone(), args.macs.clone(), rx.agent.clone());
@@ -296,6 +317,13 @@ fn run(
                     KeyCode::Char('c') if k.modifiers.contains(event::KeyModifiers::CONTROL) => {
                         break Ok(())
                     }
+                    KeyCode::Char('t') => {
+                        let theme = ui::theme::cycle();
+                        eprintln!("macdash: theme {}", theme.name);
+                        if let Err(e) = apply_console_palette(terminal.backend_mut(), theme) {
+                            break Err(e);
+                        }
+                    }
                     _ => {}
                 },
                 Ok(_) => {}
@@ -320,6 +348,7 @@ fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Out>>> {
         use std::io::Write;
         stdout.write_all(b"\x1b%G")?;
     }
+    apply_console_palette(&mut stdout, ui::theme::current())?;
     execute!(stdout, EnterAlternateScreen, crossterm::cursor::Hide)?;
     let out = io::BufWriter::with_capacity(FRAME_BUFFER_BYTES, stdout);
     let mut terminal = Terminal::new(CrosstermBackend::new(out))?;
@@ -328,7 +357,21 @@ fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Out>>> {
     Ok(terminal)
 }
 
+/// The Linux console rounds RGB to its 16-colour palette, so reprogram the
+/// palette to the theme's exact colours. Other terminals render RGB directly.
+fn apply_console_palette(out: &mut impl io::Write, theme: &ui::theme::Theme) -> io::Result<()> {
+    if std::env::var("TERM").as_deref() == Ok("linux") {
+        out.write_all(ui::theme::console_palette(theme).as_bytes())?;
+    }
+    Ok(())
+}
+
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Out>>) -> io::Result<()> {
+    if std::env::var("TERM").as_deref() == Ok("linux") {
+        // Hand the console back with its stock palette.
+        use std::io::Write;
+        terminal.backend_mut().write_all(b"\x1b]R")?;
+    }
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),

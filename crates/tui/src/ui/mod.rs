@@ -78,13 +78,13 @@ fn render_header(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence
         ),
         Span::styled(
             host,
-            Style::default().fg(theme::FG).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme::fg()).add_modifier(Modifier::BOLD),
         ),
     ];
     if !uptime.is_empty() && area.width > 40 {
         spans.push(Span::styled(
             format!("  up {uptime}"),
-            Style::default().fg(theme::DIM),
+            Style::default().fg(theme::dim()),
         ));
     }
 
@@ -105,7 +105,7 @@ fn render_header(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence
     if used + right.chars().count() + 2 <= area.width as usize {
         let pad = area.width as usize - used - right.chars().count() - 1;
         spans.push(Span::raw(" ".repeat(pad)));
-        spans.push(Span::styled(right, Style::default().fg(theme::DIM)));
+        spans.push(Span::styled(right, Style::default().fg(theme::dim())));
     }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -116,23 +116,23 @@ fn render_waiting(f: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled(
             "  Waiting for a Mac to start streaming…",
-            Style::default().fg(theme::ACCENT),
+            Style::default().fg(theme::accent()),
         )),
         Line::from(""),
         Line::from(Span::styled(
             "  This display is announcing itself on the network.",
-            Style::default().fg(theme::DIM),
+            Style::default().fg(theme::dim()),
         )),
         Line::from(Span::styled(
             "  Start macdash-agent on the Mac and it will be found.",
-            Style::default().fg(theme::DIM),
+            Style::default().fg(theme::dim()),
         )),
     ];
     f.render_widget(
         Paragraph::new(text).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme::BORDER)),
+                .border_style(Style::default().fg(theme::border())),
         ),
         area,
     );
@@ -250,14 +250,14 @@ fn render_status(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence
         Presence::Asleep => {
             spans.push(Span::styled(
                 "Mac is asleep or unreachable",
-                Style::default().fg(theme::DIM),
+                Style::default().fg(theme::dim()),
             ));
         }
         Presence::Stale => {
             if let Some(ms) = dash.presence.millis_since_packet(now_ms) {
                 spans.push(Span::styled(
                     format!("no data for {:.1}s", ms as f64 / 1000.0),
-                    Style::default().fg(theme::WARN),
+                    Style::default().fg(theme::warn()),
                 ));
             }
         }
@@ -266,26 +266,26 @@ fn render_status(f: &mut Frame, area: Rect, dash: &Dashboard, presence: Presence
                 if let Some(net) = &p.net {
                     spans.push(Span::styled(
                         format!("{} ", net.iface),
-                        Style::default().fg(theme::DIM),
+                        Style::default().fg(theme::dim()),
                     ));
                 }
             }
             spans.push(Span::styled(
                 format!("{} pkts", dash.packets_received),
-                Style::default().fg(theme::DIM),
+                Style::default().fg(theme::dim()),
             ));
         }
         Presence::DisplayOff => {
             spans.push(Span::styled(
                 "Mac's display is asleep",
-                Style::default().fg(theme::DIM),
+                Style::default().fg(theme::dim()),
             ));
         }
         Presence::Waiting => {}
     }
 
     if area.width > 60 {
-        spans.push(Span::styled("  q quit", Style::default().fg(theme::BORDER)));
+        spans.push(Span::styled("  q quit", Style::default().fg(theme::border())));
     }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);

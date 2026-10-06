@@ -12,15 +12,15 @@ use crate::state::{Dashboard, SAMPLES_PER_COLUMN};
 fn panel(title: &str, dimmed: bool) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::BORDER))
+        .border_style(Style::default().fg(theme::border()))
         .title(Span::styled(
             format!(" {title} "),
-            Style::default().fg(if dimmed { theme::DIM } else { theme::ACCENT }),
+            Style::default().fg(if dimmed { theme::dim() } else { theme::accent() }),
         ))
 }
 
 fn fg(dimmed: bool, c: ratatui::style::Color) -> Style {
-    Style::default().fg(if dimmed { theme::DIM } else { c })
+    Style::default().fg(if dimmed { theme::dim() } else { c })
 }
 
 /// A horizontal meter drawn from block characters.
@@ -48,7 +48,7 @@ fn bar(pct: f32, width: u16, dimmed: bool) -> Line<'static> {
 
     Line::from(vec![
         Span::styled(filled, fg(dimmed, theme::scale(pct))),
-        Span::styled("·".repeat(rest), fg(dimmed, theme::BORDER)),
+        Span::styled("·".repeat(rest), fg(dimmed, theme::border())),
     ])
 }
 
@@ -94,7 +94,7 @@ pub fn cpu_panel(
                 format::pct(pkt.cpu.total),
                 cpu_context(pkt, inner.width.saturating_sub(7))
             ))
-            .style(fg(dimmed, theme::DIM)),
+            .style(fg(dimmed, theme::dim())),
             rows[0],
         );
     }
@@ -112,7 +112,7 @@ pub fn cpu_panel(
             Sparkline::default()
                 .data(&data)
                 .max(100)
-                .style(fg(dimmed, theme::ACCENT)),
+                .style(fg(dimmed, theme::accent())),
             rows[3],
         );
     }
@@ -149,10 +149,10 @@ fn core_boxes(f: &mut Frame, area: Rect, cores: &[Option<f32>], count: usize, di
             area.height,
         );
         let value = cores.get(i).copied().flatten().map(|v| v.clamp(0.0, 100.0));
-        let style = fg(dimmed, value.map(theme::scale).unwrap_or(theme::DIM));
+        let style = fg(dimmed, value.map(theme::scale).unwrap_or(theme::dim()));
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(fg(dimmed, theme::DIM))
+            .border_style(fg(dimmed, theme::dim()))
             .title(Line::from((i + 1).to_string()).alignment(Alignment::Center));
         let inner = block.inner(rect);
         f.render_widget(block, rect);
@@ -194,7 +194,7 @@ fn core_boxes(f: &mut Frame, area: Rect, cores: &[Option<f32>], count: usize, di
 /// fits a 10-core machine into ten columns.
 fn core_bars(cores: &[Option<f32>], dimmed: bool) -> Line<'static> {
     const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    let mut spans = vec![Span::styled("cores ", fg(dimmed, theme::DIM))];
+    let mut spans = vec![Span::styled("cores ", fg(dimmed, theme::dim()))];
     for &c in cores {
         let c = c.unwrap_or(0.0);
         let idx = ((c / 100.0 * 7.0).round() as usize).min(7);
@@ -238,7 +238,7 @@ pub fn mem_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
                 format!("{} ", format::bytes(m.used)),
                 Style::default()
                     .fg(if dimmed {
-                        theme::DIM
+                        theme::dim()
                     } else {
                         theme::scale(used_pct)
                     })
@@ -246,7 +246,7 @@ pub fn mem_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
             ),
             Span::styled(
                 format!("/ {}", format::bytes(m.total)),
-                fg(dimmed, theme::DIM),
+                fg(dimmed, theme::dim()),
             ),
         ])),
         rows[0],
@@ -267,7 +267,7 @@ pub fn mem_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
         if m.compressed > 0 {
             spans.push(Span::styled(
                 format!("  compressed {}", format::bytes(m.compressed)),
-                fg(dimmed, theme::DIM),
+                fg(dimmed, theme::dim()),
             ));
         }
         if m.swap_used > 0 {
@@ -279,7 +279,7 @@ pub fn mem_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
                     format::bytes(m.swap_used),
                     format::bytes(m.swap_total)
                 ),
-                fg(dimmed, theme::WARN),
+                fg(dimmed, theme::warn()),
             ));
         }
         f.render_widget(Paragraph::new(Line::from(spans)), rows[2]);
@@ -310,7 +310,7 @@ fn memory_trend(f: &mut Frame, area: Rect, data: &[u64], dimmed: bool) {
             format::bytes(low),
             format::bytes(high)
         ))
-        .style(fg(dimmed, theme::DIM)),
+        .style(fg(dimmed, theme::dim())),
         Rect { height: 1, ..area },
     );
     if area.height < 2 {
@@ -326,12 +326,12 @@ fn memory_trend(f: &mut Frame, area: Rect, data: &[u64], dimmed: bool) {
             for between in (y.min(prev) + 1)..y.max(prev) {
                 f.buffer_mut()[(area.x + x as u16, between)]
                     .set_symbol("│")
-                    .set_style(fg(dimmed, theme::OK));
+                    .set_style(fg(dimmed, theme::ok()));
             }
         }
         f.buffer_mut()[(area.x + x as u16, y)]
             .set_symbol("─")
-            .set_style(fg(dimmed, theme::OK));
+            .set_style(fg(dimmed, theme::ok()));
         previous = Some(y);
     }
 }
@@ -347,7 +347,7 @@ pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool
     // The big digits count towards each new sample rather than jumping.
     let total = dash.cpu_total(now_ms).map(|v| v.clamp(0.0, 100.0));
     let text = format::pct(total);
-    let style = fg(dimmed, total.map(theme::scale).unwrap_or(theme::DIM));
+    let style = fg(dimmed, total.map(theme::scale).unwrap_or(theme::dim()));
     let rows = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
     if !big_digits::render(f, rows[0], &text, style) {
         f.render_widget(
@@ -360,7 +360,7 @@ pub fn cpu_total_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool
     f.render_widget(
         Paragraph::new(cpu_context(pkt, inner.width))
             .alignment(Alignment::Center)
-            .style(fg(dimmed, theme::DIM)),
+            .style(fg(dimmed, theme::dim())),
         rows[1],
     );
 }
@@ -379,7 +379,7 @@ pub fn temp_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     // agent/collect/temp.rs). Say so plainly rather than showing 0C.
     let Some(temp) = &pkt.temp else {
         f.render_widget(
-            Paragraph::new(Span::styled("unavailable", fg(dimmed, theme::DIM))),
+            Paragraph::new(Span::styled("unavailable", fg(dimmed, theme::dim()))),
             inner,
         );
         return;
@@ -392,20 +392,20 @@ pub fn temp_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
                 format!("{soc:>5.1}°C"),
                 Style::default()
                     .fg(if dimmed {
-                        theme::DIM
+                        theme::dim()
                     } else {
                         theme::temp_scale(soc)
                     })
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("  SoC", fg(dimmed, theme::DIM)),
+            Span::styled("  SoC", fg(dimmed, theme::dim())),
         ]));
     }
     for (label, v) in [("GPU", temp.gpu), ("batt", temp.battery)] {
         if let Some(v) = v {
             lines.push(Line::from(vec![
                 Span::styled(format!("{v:>5.1}°C"), fg(dimmed, theme::temp_scale(v))),
-                Span::styled(format!("  {label}"), fg(dimmed, theme::DIM)),
+                Span::styled(format!("  {label}"), fg(dimmed, theme::dim())),
             ]));
         }
     }
@@ -426,7 +426,7 @@ pub fn temp_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
             Sparkline::default()
                 .data(&data)
                 .max(100)
-                .style(fg(dimmed, theme::WARN)),
+                .style(fg(dimmed, theme::warn())),
             rows[1],
         );
     }
@@ -443,7 +443,7 @@ pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     let Some(pkt) = &dash.latest else { return };
     let Some(net) = &pkt.net else {
         f.render_widget(
-            Paragraph::new(Span::styled("no interface", fg(dimmed, theme::DIM))),
+            Paragraph::new(Span::styled("no interface", fg(dimmed, theme::dim()))),
             inner,
         );
         return;
@@ -456,18 +456,18 @@ pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("▼ ", fg(dimmed, theme::RX)),
+            Span::styled("▼ ", fg(dimmed, theme::rx())),
             Span::styled(
                 format!("{:<9}", format::rate(net.rx_bps)),
                 Style::default()
-                    .fg(if dimmed { theme::DIM } else { theme::RX })
+                    .fg(if dimmed { theme::dim() } else { theme::rx() })
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("▲ ", fg(dimmed, theme::TX)),
+            Span::styled("▲ ", fg(dimmed, theme::tx())),
             Span::styled(
                 format!("{:<9}", format::rate(net.tx_bps)),
                 Style::default()
-                    .fg(if dimmed { theme::DIM } else { theme::TX })
+                    .fg(if dimmed { theme::dim() } else { theme::tx() })
                     .add_modifier(Modifier::BOLD),
             ),
         ])),
@@ -488,7 +488,7 @@ pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     let scale = network_scale(&rx, &tx);
     f.render_widget(
         Paragraph::new(format!("scale 0..{}/s", format::bytes(scale)))
-            .style(fg(dimmed, theme::DIM)),
+            .style(fg(dimmed, theme::dim())),
         details[0],
     );
     if details[1].height >= 2 {
@@ -499,7 +499,7 @@ pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
             Constraint::Min(0),
         ])
         .split(details[1]);
-        for (idx, (data, label, color)) in [(&rx, "▼", theme::RX), (&tx, "▲", theme::TX)]
+        for (idx, (data, label, color)) in [(&rx, "▼", theme::rx()), (&tx, "▲", theme::tx())]
             .into_iter()
             .enumerate()
         {
@@ -533,11 +533,11 @@ pub fn net_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
     }
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("session  ", fg(dimmed, theme::DIM)),
-            Span::styled("▼ ", fg(dimmed, theme::RX)),
-            Span::styled(format::bytes(net.rx_total), fg(dimmed, theme::DIM)),
-            Span::styled("   ▲ ", fg(dimmed, theme::TX)),
-            Span::styled(format::bytes(net.tx_total), fg(dimmed, theme::DIM)),
+            Span::styled("session  ", fg(dimmed, theme::dim())),
+            Span::styled("▼ ", fg(dimmed, theme::rx())),
+            Span::styled(format::bytes(net.rx_total), fg(dimmed, theme::dim())),
+            Span::styled("   ▲ ", fg(dimmed, theme::tx())),
+            Span::styled(format::bytes(net.tx_total), fg(dimmed, theme::dim())),
         ])),
         details[2],
     );
@@ -584,7 +584,7 @@ pub fn proc_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
         .take(inner.height as usize)
         .map(|p| {
             let mut cells = vec![
-                Span::styled(p.name.clone(), fg(dimmed, theme::FG)),
+                Span::styled(p.name.clone(), fg(dimmed, theme::fg())),
                 Span::styled(
                     format!("{:>6.1}%", p.cpu),
                     // Per-process CPU is relative to one core, so 100% is a
@@ -593,7 +593,7 @@ pub fn proc_panel(f: &mut Frame, area: Rect, dash: &Dashboard, dimmed: bool) {
                 ),
                 Span::styled(
                     format!("{:>6}", format::bytes(p.mem)),
-                    fg(dimmed, theme::DIM),
+                    fg(dimmed, theme::dim()),
                 ),
             ];
             if bar_w > 0 {

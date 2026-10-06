@@ -10,7 +10,9 @@ HOST="${1:-}"
 if [[ -z "$HOST" ]]; then
     echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>]"
     echo "          [--font <console-font>] [--hdmi] [--portrait|--landscape|--landscape-flipped] [--zero2]"
+    echo "          [--theme classic|traffic|quiet|thermal|phosphor]"
     echo
+    echo "  --theme  colour scheme; press t on a keyboard to preview them."
     echo "  --hdmi   switch off HDMI while the Mac's display sleeps (VC4/KMS)."
     echo "  --portrait  panel mounted clockwise, right-hand connectors facing down."
     echo "  --landscape restore normal orientation; otherwise keep the installed setting."
@@ -34,6 +36,7 @@ BACKLIGHT=""
 HDMI=0
 ROTATION=""
 MAC_ADDR=""
+THEME=""
 # The final 1024x600 panel needs 8x16 cells for the full 128x37 layout.
 # Existing installs retain their selected typeface and size unless overridden.
 CONSOLE_FONT="Lat15-Terminus16"
@@ -53,6 +56,7 @@ while [[ $# -gt 0 ]]; do
         --ttf)       TTF_FONT="$2"; shift 2 ;;
         --ttf-size)  TTF_SIZE="$2"; shift 2 ;;
         --mac)       MAC_ADDR="$2"; shift 2 ;;
+        --theme)     THEME="$2"; shift 2 ;;
         --zero2)     TARGET="armv7-unknown-linux-musleabihf"; shift ;;
         *) echo "unknown option: $1"; exit 1 ;;
     esac
@@ -81,6 +85,7 @@ ARGS="$ARGS --font /usr/local/share/consolefonts/macdash.psf"
 [[ -n "$BACKLIGHT" ]] && ARGS="$ARGS --backlight $BACKLIGHT"
 [[ "$HDMI" = 1 ]] && ARGS="$ARGS --hdmi"
 [[ -n "$MAC_ADDR" ]] && ARGS="$ARGS --mac $MAC_ADDR"
+[[ -n "$THEME" ]] && ARGS="$ARGS --theme $THEME"
 
 echo "Installing to ${HOST}"
 
