@@ -147,6 +147,21 @@ pub const THEMES: &[Theme] = &[
         tx: Color::Rgb(0xa8, 0x74, 0x20),
         console_palette: ConsolePalette::Exact,
     },
+    // Classic's blue with every colour shown exactly: amber instead of the
+    // console's yellow, a softer red, violet upload and warm white text.
+    Theme {
+        name: "sapphire",
+        fg: TEXT,
+        dim: GREY,
+        border: DARK_GREY,
+        accent: CLASSIC_BLUE,
+        ok: CLASSIC_BLUE,
+        warn: AMBER,
+        crit: RED,
+        rx: CLASSIC_BLUE,
+        tx: VIOLET,
+        console_palette: ConsolePalette::Exact,
+    },
 ];
 
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
