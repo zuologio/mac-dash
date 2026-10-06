@@ -10,7 +10,7 @@ HOST="${1:-}"
 if [[ -z "$HOST" ]]; then
     echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>]"
     echo "          [--font <console-font>] [--hdmi] [--portrait|--landscape|--landscape-flipped] [--zero2]"
-    echo "          [--theme classic|traffic|quiet|thermal|phosphor|sapphire]"
+    echo "          [--theme classic|traffic|quiet|thermal|phosphor|sapphire|grey]"
     echo
     echo "  --theme  colour scheme; press t on a keyboard to preview them."
     echo "  --hdmi   switch off HDMI while the Mac's display sleeps (VC4/KMS)."

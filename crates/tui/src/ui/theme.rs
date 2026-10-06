@@ -162,6 +162,24 @@ pub const THEMES: &[Theme] = &[
         tx: VIOLET,
         console_palette: ConsolePalette::Exact,
     },
+    // Greys only, so red is the one colour on screen and always means
+    // critical. Warning is told apart by brightness: normal is a mid-light
+    // grey, warning white. The console has just three grey slots, so there
+    // normal shares the dim labels' light grey and warning the text's white,
+    // both left as the kernel's own.
+    Theme {
+        name: "grey",
+        fg: TEXT,
+        dim: GREY,
+        border: DARK_GREY,
+        accent: TEXT,
+        ok: Color::Rgb(0xa0, 0xa4, 0xa8),
+        warn: Color::Rgb(0xff, 0xff, 0xff),
+        crit: RED,
+        rx: TEXT,
+        tx: Color::Rgb(0xa0, 0xa4, 0xa8),
+        console_palette: ConsolePalette::Only(&[]),
+    },
 ];
 
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
@@ -293,6 +311,19 @@ mod tests {
         assert_eq!(console_slot(t.crit), Some(9), "red");
         assert_eq!(console_slot(t.tx), Some(15), "white");
         assert_eq!(console_palette(t), "\x1b]R\x1b]Pe5293e1");
+    }
+
+    #[test]
+    fn grey_has_no_colour_but_red() {
+        let t = &THEMES[by_name("grey").unwrap()];
+        for c in t.colors() {
+            if c != t.crit {
+                assert!(matches!(console_slot(c), Some(7 | 8 | 15)), "{c:?} is not grey");
+            }
+        }
+        assert_eq!(console_slot(t.crit), Some(9), "red");
+        assert_ne!(console_slot(t.ok), console_slot(t.warn), "warning stands out");
+        assert_eq!(console_palette(t), "\x1b]R");
     }
 
     #[test]

@@ -122,10 +122,12 @@ Orientation and font choices are kept on later installs unless you pass a new on
 | `thermal` | teal | warm amber | red-orange |
 | `phosphor` | dark amber | bright amber | red-orange |
 | `sapphire` | blue (`#5293E1`) | amber | soft red, with violet upload |
+| `grey` | light grey | white | red, the only colour on screen |
 
 Press **`t`** while the dashboard is running to cycle through them, then set your
 favourite with `--theme`. On the Pi's console, all themes except `classic`
-show their exact colours; `classic` keeps the console's own yellow and red.
+and `grey` show their exact colours; `classic` keeps the console's own yellow
+and red, and `grey` its own greys and red.
 
 To try one locally:
 
@@ -136,6 +138,7 @@ cargo run --release -p macdash-tui -- --theme quiet
 cargo run --release -p macdash-tui -- --theme thermal
 cargo run --release -p macdash-tui -- --theme phosphor
 cargo run --release -p macdash-tui -- --theme sapphire
+cargo run --release -p macdash-tui -- --theme grey
 ```
 
 To make one the Pi's default, install with it (add your other options, such
@@ -148,6 +151,7 @@ as `--hdmi`, since they are not kept between installs):
 ./deploy/install-pi.sh pi@192.168.0.148 --theme thermal
 ./deploy/install-pi.sh pi@192.168.0.148 --theme phosphor
 ./deploy/install-pi.sh pi@192.168.0.148 --theme sapphire
+./deploy/install-pi.sh pi@192.168.0.148 --theme grey
 ```
 
 ## Using it
@@ -231,7 +235,7 @@ as JSON.
 
 | Flag | |
 |---|---|
-| `--theme <name>` | `classic`, `traffic`, `quiet`, `thermal`, `phosphor`, `sapphire` |
+| `--theme <name>` | `classic`, `traffic`, `quiet`, `thermal`, `phosphor`, `sapphire`, `grey` |
 | `--hdmi` | HDMI off while the Mac's display sleeps (VC4/KMS, `fb0`) |
 | `--backlight <path>` | Backlight to darken while the Mac sleeps |
 | `--font <path>` | Console font to load before drawing |
