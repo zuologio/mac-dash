@@ -33,6 +33,28 @@ impl RectF {
     }
 }
 
+/// A rectangle of whole pixels, for the parts of a frame that changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IRect {
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
+}
+
+impl IRect {
+    pub const fn new(x: usize, y: usize, w: usize, h: usize) -> Self {
+        Self { x, y, w, h }
+    }
+
+    /// The part of this rectangle inside a `w` x `h` canvas, if any.
+    pub fn clip(&self, w: usize, h: usize) -> Option<IRect> {
+        let x1 = self.x.saturating_add(self.w).min(w);
+        let y1 = self.y.saturating_add(self.h).min(h);
+        (self.x < x1 && self.y < y1).then(|| IRect::new(self.x, self.y, x1 - self.x, y1 - self.y))
+    }
+}
+
 /// `a` scaled by `cover` (0..=1), as an alpha.
 fn alpha(a: u8, cover: f32) -> u8 {
     (a as f32 * cover.clamp(0.0, 1.0) + 0.5) as u8

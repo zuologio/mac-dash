@@ -12,7 +12,7 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
 
-use super::canvas::Canvas;
+use super::canvas::{Canvas, IRect, Rgb};
 
 pub const FB_PATH: &str = "/dev/fb0";
 pub const ROTATE_PATH: &str = "/sys/class/graphics/fbcon/rotate";
@@ -58,38 +58,117 @@ pub fn logical_size(f: &Format, rotate: u8) -> (usize, usize) {
     }
 }
 
+fn bytes_per_pixel(p: Pixel) -> usize {
+    if p == Pixel::Rgb565 {
+        2
+    } else {
+        4
+    }
+}
+
+/// Where logical pixel (x, y) lands on the panel.
+fn physical(f: &Format, rotate: u8, x: usize, y: usize) -> (usize, usize) {
+    match rotate & 3 {
+        1 => (f.xres - 1 - y, x),
+        2 => (f.xres - 1 - x, f.yres - 1 - y),
+        3 => (y, f.yres - 1 - x),
+        _ => (x, y),
+    }
+}
+
+/// Whether `c` can be packed into `out` at all: a canvas that does not
+/// match the panel's logical size is ignored rather than written out of
+/// bounds.
+fn fits(c: &Canvas, f: &Format, rotate: u8, out: &[u8]) -> bool {
+    (c.w, c.h) == logical_size(f, rotate)
+        && c.px.len() == c.w * c.h
+        && out.len() >= f.stride * f.yres
+        && f.stride >= f.xres * bytes_per_pixel(f.pixel)
+}
+
+#[inline(always)]
+fn put(pixel: Pixel, p: Rgb, d: &mut [u8]) {
+    match pixel {
+        Pixel::Rgb565 => {
+            let v = ((p.0 as u16 >> 3) << 11) | ((p.1 as u16 >> 2) << 5) | (p.2 as u16 >> 3);
+            d.copy_from_slice(&v.to_le_bytes());
+        }
+        Pixel::Xrgb8888 => d.copy_from_slice(&[p.2, p.1, p.0, 0xff]),
+        Pixel::Xbgr8888 => d.copy_from_slice(&[p.0, p.1, p.2, 0xff]),
+    }
+}
+
 /// Write `c` into `out` in the panel's format, turned to match `rotate`.
-/// A canvas that does not match the panel's logical size is ignored rather
-/// than written out of bounds.
 pub fn pack(c: &Canvas, f: &Format, rotate: u8, out: &mut [u8]) {
+    pack_rect(c, f, rotate, IRect::new(0, 0, c.w, c.h), out);
+}
+
+/// Pack only the logical rectangle `r` (clipped to the canvas). Upright and
+/// upside-down panels map a logical row to a physical row, walked forwards
+/// or backwards; sideways panels map it to a physical column.
+pub fn pack_rect(c: &Canvas, f: &Format, rotate: u8, r: IRect, out: &mut [u8]) {
     let rotate = rotate & 3;
-    let bpp = if f.pixel == Pixel::Rgb565 { 2 } else { 4 };
-    if (c.w, c.h) != logical_size(f, rotate)
-        || out.len() < f.stride * f.yres
-        || f.stride < f.xres * bpp
-    {
+    if !fits(c, f, rotate, out) {
         return;
     }
-    for y in 0..c.h {
-        let row = &c.px[y * c.w..(y + 1) * c.w];
-        for (x, p) in row.iter().enumerate() {
-            let (px, py) = match rotate {
-                1 => (f.xres - 1 - y, x),
-                2 => (f.xres - 1 - x, f.yres - 1 - y),
-                3 => (y, f.yres - 1 - x),
-                _ => (x, y),
-            };
-            let o = py * f.stride + px * bpp;
-            match f.pixel {
-                Pixel::Rgb565 => {
-                    let v = ((p.0 as u16 >> 3) << 11) | ((p.1 as u16 >> 2) << 5) | (p.2 as u16 >> 3);
-                    out[o..o + 2].copy_from_slice(&v.to_le_bytes());
+    let Some(r) = r.clip(c.w, c.h) else { return };
+    let bpp = bytes_per_pixel(f.pixel);
+    let pixel = f.pixel;
+    for y in r.y..r.y + r.h {
+        let src = &c.px[y * c.w + r.x..y * c.w + r.x + r.w];
+        match rotate {
+            0 | 2 => {
+                let (px0, py) = physical(f, rotate, r.x, y);
+                // The physical row segment the logical one covers.
+                let lo = if rotate == 0 { px0 } else { px0 + 1 - r.w };
+                let o = py * f.stride + lo * bpp;
+                let dst = out[o..o + r.w * bpp].chunks_exact_mut(bpp);
+                if rotate == 0 {
+                    for (d, &p) in dst.zip(src) {
+                        put(pixel, p, d);
+                    }
+                } else {
+                    for (d, &p) in dst.rev().zip(src) {
+                        put(pixel, p, d);
+                    }
                 }
-                Pixel::Xrgb8888 => out[o..o + 4].copy_from_slice(&[p.2, p.1, p.0, 0xff]),
-                Pixel::Xbgr8888 => out[o..o + 4].copy_from_slice(&[p.0, p.1, p.2, 0xff]),
+            }
+            _ => {
+                for (i, &p) in src.iter().enumerate() {
+                    let (px, py) = physical(f, rotate, r.x + i, y);
+                    let o = py * f.stride + px * bpp;
+                    put(pixel, p, &mut out[o..o + bpp]);
+                }
             }
         }
     }
+}
+
+/// The physical rows `rects` touch, as sorted, merged [start, end) bands:
+/// each band is one contiguous write to the framebuffer.
+#[allow(dead_code)] // until the run loop presents dirty rects
+pub fn row_bands(f: &Format, rotate: u8, rects: &[IRect]) -> Vec<(usize, usize)> {
+    let rotate = rotate & 3;
+    let (w, h) = logical_size(f, rotate);
+    let mut bands: Vec<(usize, usize)> = rects
+        .iter()
+        .filter_map(|r| r.clip(w, h))
+        .map(|r| match rotate {
+            1 => (r.x, r.x + r.w),
+            2 => (f.yres - (r.y + r.h), f.yres - r.y),
+            3 => (f.yres - (r.x + r.w), f.yres - r.x),
+            _ => (r.y, r.y + r.h),
+        })
+        .collect();
+    bands.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(bands.len());
+    for (a, b) in bands {
+        match merged.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => merged.push((a, b)),
+        }
+    }
+    merged
 }
 
 /// `struct fb_fix_screeninfo`. `c_ulong` keeps the layout right on both
@@ -171,11 +250,29 @@ impl Framebuffer {
         pack(c, &self.format, self.rotate, &mut self.buf);
         self.file.write_all_at(&self.buf, 0)
     }
+
+    /// Pack only `rects` into the persistent buffer and write only the
+    /// physical rows they touch, one write per band. The rest of the buffer
+    /// still holds the last frame, which is what the panel shows.
+    #[allow(dead_code)] // until the run loop presents dirty rects
+    pub fn present_rects(&mut self, c: &Canvas, rects: &[IRect]) -> io::Result<()> {
+        if !fits(c, &self.format, self.rotate, &self.buf) {
+            return Ok(());
+        }
+        for &r in rects {
+            pack_rect(c, &self.format, self.rotate, r, &mut self.buf);
+        }
+        let stride = self.format.stride;
+        for (a, b) in row_bands(&self.format, self.rotate, rects) {
+            self.file.write_all_at(&self.buf[a * stride..b * stride], (a * stride) as u64)?;
+        }
+        Ok(())
+    }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pixel::canvas::{hex, Canvas};
+    use crate::pixel::canvas::hex;
 
     fn fmt(xres: usize, yres: usize, pixel: Pixel) -> Format {
         let bpp = if matches!(pixel, Pixel::Rgb565) { 2 } else { 4 };
@@ -269,6 +366,97 @@ mod tests {
         let mut out = vec![0; f.stride * f.yres];
         pack(&c, &f, 5, &mut out);
         assert_eq!(px16(&out, &f, 3, 0), 0xffff);
+    }
+
+    /// A canvas whose every pixel differs, so a misplaced byte shows.
+    fn noise(w: usize, h: usize) -> Canvas {
+        let mut c = Canvas::new(w, h, hex(0));
+        for (i, p) in c.px.iter_mut().enumerate() {
+            let v = (i as u32).wrapping_mul(2_654_435_761);
+            *p = Rgb((v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8);
+        }
+        c
+    }
+
+    #[test]
+    fn packing_a_rect_matches_the_same_bytes_of_a_full_pack() {
+        for pixel in [Pixel::Rgb565, Pixel::Xrgb8888, Pixel::Xbgr8888] {
+            let f = fmt(13, 7, pixel);
+            for rot in 0..4u8 {
+                let (w, h) = logical_size(&f, rot);
+                let c = noise(w, h);
+                let mut full = vec![0u8; f.stride * f.yres];
+                pack(&c, &f, rot, &mut full);
+                for r in [IRect::new(0, 0, w, h), IRect::new(2, 1, 3, 4), IRect::new(w - 1, h - 1, 1, 1), IRect::new(1, 0, w - 2, 1)] {
+                    let mut part = vec![0u8; f.stride * f.yres];
+                    pack_rect(&c, &f, rot, r, &mut part);
+                    let mut expect = vec![0u8; f.stride * f.yres];
+                    // The bytes of every pixel inside the rect, and none else.
+                    let bpp = if pixel == Pixel::Rgb565 { 2 } else { 4 };
+                    for y in r.y..r.y + r.h {
+                        for x in r.x..r.x + r.w {
+                            let (px, py) = physical(&f, rot, x, y);
+                            let o = py * f.stride + px * bpp;
+                            expect[o..o + bpp].copy_from_slice(&full[o..o + bpp]);
+                        }
+                    }
+                    assert!(part == expect, "{pixel:?} rotate {rot} {r:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rects_are_clipped_to_the_canvas() {
+        let f = fmt(6, 4, Pixel::Rgb565);
+        let c = noise(6, 4);
+        let mut full = vec![0u8; f.stride * f.yres];
+        pack(&c, &f, 2, &mut full);
+        let mut part = vec![0u8; f.stride * f.yres];
+        pack_rect(&c, &f, 2, IRect::new(0, 0, 100, 100), &mut part);
+        assert!(part == full);
+        let mut none = vec![0u8; f.stride * f.yres];
+        pack_rect(&c, &f, 2, IRect::new(50, 50, 10, 10), &mut none);
+        pack_rect(&c, &f, 2, IRect::new(usize::MAX, 1, usize::MAX, 1), &mut none);
+        assert!(none.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn rects_become_merged_physical_row_bands() {
+        let f = fmt(10, 8, Pixel::Rgb565);
+        // Upright: the rect's own rows.
+        assert_eq!(row_bands(&f, 0, &[IRect::new(0, 2, 3, 2)]), vec![(2, 4)]);
+        // Upside down: mirrored rows.
+        assert_eq!(row_bands(&f, 2, &[IRect::new(0, 2, 3, 2)]), vec![(4, 6)]);
+        // Sideways: the rect's columns become rows (logical is 8x10).
+        assert_eq!(row_bands(&f, 1, &[IRect::new(1, 0, 2, 9)]), vec![(1, 3)]);
+        assert_eq!(row_bands(&f, 3, &[IRect::new(1, 0, 2, 9)]), vec![(5, 7)]);
+        // Overlapping and touching bands merge; separate ones stay apart.
+        let rs = [IRect::new(0, 0, 1, 2), IRect::new(0, 1, 1, 2), IRect::new(0, 3, 1, 1), IRect::new(0, 6, 1, 1)];
+        assert_eq!(row_bands(&f, 0, &rs), vec![(0, 4), (6, 7)]);
+        // Off-canvas and empty rects add nothing.
+        assert!(row_bands(&f, 0, &[IRect::new(0, 50, 1, 1), IRect::new(0, 0, 0, 5)]).is_empty());
+        assert!(row_bands(&f, 0, &[]).is_empty());
+    }
+
+    #[test]
+    fn present_rects_writes_only_the_changed_rows() {
+        let path = std::env::temp_dir().join(format!("macdash-fb-{}", std::process::id()));
+        let f = fmt(6, 5, Pixel::Rgb565);
+        std::fs::write(&path, vec![0xaau8; f.stride * f.yres]).unwrap();
+        let file = OpenOptions::new().read(true).write(true).open(&path).unwrap();
+        let mut fb = Framebuffer { file, format: f, rotate: 0, buf: vec![0; f.stride * f.yres] };
+        let c = noise(6, 5);
+        fb.present_rects(&c, &[]).unwrap();
+        assert!(std::fs::read(&path).unwrap().iter().all(|&b| b == 0xaa), "empty list writes nothing");
+        fb.present_rects(&c, &[IRect::new(1, 1, 2, 2)]).unwrap();
+        let got = std::fs::read(&path).unwrap();
+        let mut full = vec![0u8; f.stride * f.yres];
+        pack(&c, &f, 0, &mut full);
+        assert!(got[..f.stride].iter().all(|&b| b == 0xaa), "row 0 untouched");
+        assert!(got[3 * f.stride..].iter().all(|&b| b == 0xaa), "rows 3.. untouched");
+        assert_eq!(&got[f.stride + 2..f.stride + 6], &full[f.stride + 2..f.stride + 6]);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
