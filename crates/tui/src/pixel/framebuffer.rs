@@ -50,6 +50,7 @@ pub fn parse_rotate(s: &str) -> u8 {
 
 /// The size the viewer sees: sideways rotations swap width and height.
 pub fn logical_size(f: &Format, rotate: u8) -> (usize, usize) {
+    let rotate = rotate & 3;
     if rotate % 2 == 1 {
         (f.yres, f.xres)
     } else {
@@ -61,10 +62,14 @@ pub fn logical_size(f: &Format, rotate: u8) -> (usize, usize) {
 /// A canvas that does not match the panel's logical size is ignored rather
 /// than written out of bounds.
 pub fn pack(c: &Canvas, f: &Format, rotate: u8, out: &mut [u8]) {
-    if (c.w, c.h) != logical_size(f, rotate) || out.len() < f.stride * f.yres {
+    let rotate = rotate & 3;
+    let bpp = if f.pixel == Pixel::Rgb565 { 2 } else { 4 };
+    if (c.w, c.h) != logical_size(f, rotate)
+        || out.len() < f.stride * f.yres
+        || f.stride < f.xres * bpp
+    {
         return;
     }
-    let bpp = if f.pixel == Pixel::Rgb565 { 2 } else { 4 };
     for y in 0..c.h {
         let row = &c.px[y * c.w..(y + 1) * c.w];
         for (x, p) in row.iter().enumerate() {
@@ -147,7 +152,8 @@ impl Framebuffer {
             stride: fix.line_length as usize,
             pixel,
         };
-        if format.xres == 0 || format.yres == 0 || format.stride < format.xres * 2 {
+        let bpp = if pixel == Pixel::Rgb565 { 2 } else { 4 };
+        if format.xres == 0 || format.yres == 0 || format.stride < format.xres * bpp {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "framebuffer reports no size"));
         }
         let rotate = std::fs::read_to_string(rotate_path)
@@ -242,5 +248,35 @@ mod tests {
     fn opening_something_that_is_not_a_framebuffer_fails_cleanly() {
         assert!(Framebuffer::open("/dev/null", "/nonexistent").is_err());
         assert!(Framebuffer::open("/nonexistent/fb0", "/nonexistent").is_err());
+    }
+
+    #[test]
+    fn a_stride_too_short_for_the_pixel_size_is_refused() {
+        let f = Format { xres: 4, yres: 3, stride: 8, pixel: Pixel::Xrgb8888 };
+        let c = Canvas::new(4, 3, hex(0xffffff));
+        let mut out = vec![0; f.stride * f.yres];
+        pack(&c, &f, 0, &mut out);
+        assert!(out.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn out_of_range_rotations_behave_like_their_low_two_bits() {
+        let f = fmt(4, 3, Pixel::Rgb565);
+        assert_eq!(logical_size(&f, 5), logical_size(&f, 1));
+        let (w, h) = logical_size(&f, 5);
+        let mut c = Canvas::new(w, h, hex(0x000000));
+        c.blend(0, 0, hex(0xffffff), 255);
+        let mut out = vec![0; f.stride * f.yres];
+        pack(&c, &f, 5, &mut out);
+        assert_eq!(px16(&out, &f, 3, 0), 0xffff);
+    }
+
+    #[test]
+    fn a_canvas_of_the_wrong_size_is_refused() {
+        let f = fmt(4, 3, Pixel::Rgb565);
+        let c = Canvas::new(3, 3, hex(0xffffff));
+        let mut out = vec![0; f.stride * f.yres];
+        pack(&c, &f, 0, &mut out);
+        assert!(out.iter().all(|&b| b == 0));
     }
 }
