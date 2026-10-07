@@ -9,7 +9,11 @@ use super::canvas::RectF;
 
 pub const MENU_H: f32 = 30.0;
 pub const RADIUS: f32 = 18.0;
-pub const ROW_H: f32 = 26.0;
+/// One app row: tall enough for 20 px names read from across a room.
+pub const ROW_H: f32 = 52.0;
+/// Apps shown. Few and large beats many and small: the card is a glance at
+/// what is busy, not a process table.
+pub const APP_ROWS: usize = 3;
 const GAP: f32 = 16.0;
 /// Height above the first process row: the card title.
 const PROC_HEADER: f32 = 44.0;
@@ -79,9 +83,9 @@ pub fn core_slots(area: RectF, n: usize) -> Vec<RectF> {
         .collect()
 }
 
-/// How many process rows fit in the processes card.
+/// How many app rows fit in the processes card, at most `APP_ROWS`.
 pub fn proc_rows(procs: RectF) -> usize {
-    ((procs.h - PROC_HEADER - 8.0) / ROW_H).floor().max(0.0) as usize
+    (((procs.h - PROC_HEADER - 8.0) / ROW_H).floor().max(0.0) as usize).min(APP_ROWS)
 }
 
 #[cfg(test)]
@@ -147,7 +151,12 @@ mod tests {
 
     #[test]
     fn process_rows_fill_the_card() {
-        assert_eq!(proc_rows(RectF::new(16.0, 376.0, 992.0, 208.0)), 6);
+        assert_eq!(proc_rows(RectF::new(16.0, 376.0, 992.0, 208.0)), 3);
         assert_eq!(proc_rows(RectF::new(0.0, 0.0, 100.0, 20.0)), 0);
+    }
+
+    #[test]
+    fn a_tall_card_still_shows_three_apps() {
+        assert_eq!(proc_rows(RectF::new(0.0, 0.0, 568.0, 600.0)), 3);
     }
 }

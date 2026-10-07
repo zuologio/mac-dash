@@ -22,7 +22,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use macdash_proto::{Presence, StatsPacket, MAX_PROC_NAME, STATS_INTERVAL_MS, TOP_PROC_COUNT};
+use macdash_proto::{Presence, StatsPacket, MAX_PROC_NAME, STATS_INTERVAL_MS};
 
 use super::canvas::{hex, Canvas, IRect, RectF, Rgb};
 use super::layout::{core_slots, layout, proc_rows, Layout, MENU_H, RADIUS, ROW_H};
@@ -252,7 +252,7 @@ impl Scene {
             (self.l.memory, "Memory"),
             (self.l.temp, "Temperature"),
             (self.l.net, "Network"),
-            (self.l.procs, "Top Processes"),
+            (self.l.procs, "Top Apps"),
         ] {
             t.draw(c, Face::SemiBold, 13.0, r.x + 20.0, r.y + 30.0, title, SECONDARY, 255);
         }
@@ -265,11 +265,12 @@ impl Scene {
         }
         t.draw_right(c, Face::Regular, 10.0, chart.x + chart.w, chart.y + chart.h + 14.0, &history_caption(), TERTIARY, 255);
         let p = self.l.procs;
-        t.draw_right(c, Face::SemiBold, 11.0, p.x + 640.0f32.min(p.w - 200.0), p.y + 30.0, "CPU", TERTIARY, 255);
+        let (cpu_right, ..) = proc_columns(p);
+        t.draw_right(c, Face::SemiBold, 11.0, cpu_right, p.y + 30.0, "CPU", TERTIARY, 255);
         t.draw_right(c, Face::SemiBold, 11.0, p.x + p.w - 32.0, p.y + 30.0, "MEMORY", TERTIARY, 255);
-        // Bands only behind rows that can hold a process: a tall card would
-        // otherwise show striped rows the protocol can never fill.
-        for i in (1..proc_rows(p).min(TOP_PROC_COUNT)).step_by(2) {
+        // Bands only behind rows that can hold an app: a tall card would
+        // otherwise show striped rows that are never filled.
+        for i in (1..proc_rows(p)).step_by(2) {
             let y = p.y + 44.0 + i as f32 * ROW_H;
             c.rrect(RectF::new(p.x + 10.0, y, p.w - 20.0, ROW_H), 6.0, WHITE, 9);
         }
@@ -492,7 +493,7 @@ impl Model {
                 let r = l.procs;
                 let (cpu_right, _, _, name_max) = proc_columns(r);
                 // Name and icon, the bar and CPU figure, the memory figure.
-                let xs = [r.x + 10.0, r.x + 46.0 + name_max + 4.0, cpu_right + 4.0, r.x + r.w - 10.0];
+                let xs = [r.x + 10.0, r.x + NAME_X + name_max + 4.0, cpu_right + 4.0, r.x + r.w - 10.0];
                 rows.iter()
                     .enumerate()
                     .flat_map(|(i, row)| {
@@ -663,7 +664,7 @@ fn procs_model(r: RectF, t: &mut Typefaces, p: &StatsPacket) -> Model {
                 ProcRow {
                     initial: proc_.name.chars().next().map(|ch| ch.to_uppercase().collect()).unwrap_or_default(),
                     color: icon_color(&proc_.name),
-                    name: t.fit(Face::Regular, 13.0, &name, name_max),
+                    name: t.fit(Face::SemiBold, 20.0, &name, name_max),
                     cpu: cpu.to_bits(),
                     cpu_s: format!("{cpu:.1}%"),
                     mem: format!("{m} {unit}"),
@@ -673,15 +674,18 @@ fn procs_model(r: RectF, t: &mut Typefaces, p: &StatsPacket) -> Model {
     )
 }
 
-/// The processes card's columns: CPU text's right edge, the bar's x and
-/// width, whether the bar fits, and the room left for names.
+/// Where an app's name starts, right of its 32 px icon.
+const NAME_X: f32 = 66.0;
+
+/// The apps card's columns: CPU text's right edge, the bar's x and width,
+/// whether the bar fits, and the room left for names.
 fn proc_columns(r: RectF) -> (f32, (f32, f32), bool, f32) {
-    let cpu_right = r.x + 640.0f32.min(r.w - 200.0);
-    let bar_x = r.x + 360.0;
-    // 60 px leaves room for "100.0%" between the bar and its column.
-    let bar_w = 220.0f32.min(cpu_right - bar_x - 60.0);
+    let cpu_right = r.x + 780.0f32.min(r.w - 180.0);
+    let bar_x = r.x + 400.0;
+    // 90 px leaves room for a 22 px "100.0%" between the bar and its column.
+    let bar_w = 280.0f32.min(cpu_right - bar_x - 90.0);
     let show_bar = bar_w >= 40.0;
-    let name_max = if show_bar { bar_x - (r.x + 46.0) - 16.0 } else { cpu_right - 60.0 - (r.x + 46.0) };
+    let name_max = if show_bar { bar_x - (r.x + NAME_X) - 20.0 } else { cpu_right - 90.0 - (r.x + NAME_X) };
     (cpu_right, (bar_x, bar_w), show_bar, name_max)
 }
 
@@ -792,19 +796,19 @@ fn draw(c: &mut Canvas, t: &mut Typefaces, l: &Layout, m: &Model) {
             let (cpu_right, (bar_x, bar_w), show_bar, _) = proc_columns(r);
             for (i, row) in rows.iter().enumerate() {
                 let y = r.y + 44.0 + i as f32 * ROW_H;
-                let icon = RectF::new(r.x + 20.0, y + 5.0, 16.0, 16.0);
-                c.rrect(icon, 4.5, row.color, 230);
-                let iw = t.width(Face::SemiBold, 10.0, &row.initial);
-                t.draw(c, Face::SemiBold, 10.0, icon.x + (16.0 - iw) / 2.0, y + 17.0, &row.initial, WHITE, 255);
-                t.draw(c, Face::Regular, 13.0, r.x + 46.0, y + 18.0, &row.name, LABEL, 255);
+                let icon = RectF::new(r.x + 20.0, y + 10.0, 32.0, 32.0);
+                c.rrect(icon, 8.0, row.color, 230);
+                let iw = t.width(Face::SemiBold, 16.0, &row.initial);
+                t.draw(c, Face::SemiBold, 16.0, icon.x + (32.0 - iw) / 2.0, y + 32.0, &row.initial, WHITE, 255);
+                t.draw(c, Face::SemiBold, 20.0, r.x + NAME_X, y + 33.0, &row.name, LABEL, 255);
                 let cpu = f32::from_bits(row.cpu);
                 if show_bar {
-                    c.rrect(RectF::new(bar_x, y + 10.0, bar_w, 6.0), 3.0, WELL, 255);
-                    let fw = (bar_w * cpu.min(100.0) / 100.0).max(6.0);
-                    c.rrect(RectF::new(bar_x, y + 10.0, fw, 6.0), 3.0, severity(cpu, ACCENT), 255);
+                    c.rrect(RectF::new(bar_x, y + 21.0, bar_w, 10.0), 5.0, WELL, 255);
+                    let fw = (bar_w * cpu.min(100.0) / 100.0).max(10.0);
+                    c.rrect(RectF::new(bar_x, y + 21.0, fw, 10.0), 5.0, severity(cpu, ACCENT), 255);
                 }
-                t.draw_right(c, Face::Medium, 13.0, cpu_right, y + 18.0, &row.cpu_s, LABEL, 255);
-                t.draw_right(c, Face::Regular, 13.0, r.x + r.w - 32.0, y + 18.0, &row.mem, SECONDARY, 255);
+                t.draw_right(c, Face::Medium, 22.0, cpu_right, y + 34.0, &row.cpu_s, LABEL, 255);
+                t.draw_right(c, Face::Regular, 15.0, r.x + r.w - 32.0, y + 33.0, &row.mem, SECONDARY, 255);
             }
         }
     }
@@ -1077,7 +1081,7 @@ mod tests {
             }
         }
         assert_eq!(s.cells(Part::CpuCores).len(), 10 * 11, "11 stripes a capsule");
-        assert_eq!(s.cells(Part::Procs).len(), 3 * 6);
+        assert_eq!(s.cells(Part::Procs).len(), 3 * 3);
     }
 
     #[test]

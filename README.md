@@ -45,8 +45,9 @@ the Mac, or with `--text`, you get the text dashboard shown below.
 ```
 
 **Shows:** CPU (total, per core, user/system, load) · memory (used, pressure,
-compressed, swap) · SoC and battery temperature · network throughput · top 8
-processes · the Mac's clock.
+compressed, swap) · SoC and battery temperature · network throughput · top apps,
+each app's helper processes counted together (3 on the pixel panel, 8 in the
+text view) · the Mac's clock.
 
 **Costs:** about 0.012% of one Mac core, 5 MB of RAM and 37 kbps on the network.
 No sudo needed. The Pi binary is a single 700 KB static file.
@@ -201,8 +202,8 @@ macdash-tui --port 0      # --port 0 because the service already uses port 9999
 **Several screens** work with no extra setup: install on another Pi.
 
 **Reading the numbers:** the big CPU figure is the whole machine (0–100%).
-Process percentages count one core as 100%, so they can add up to more than
-the big figure. Network rates are in bytes per second (`K` = 1024 bytes).
+App percentages count one core as 100%, so they can add up to more than the
+big figure. Network rates are in bytes per second (`K` = 1024 bytes).
 
 ## Troubleshooting
 

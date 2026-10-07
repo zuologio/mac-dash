@@ -1,4 +1,11 @@
-//! Top processes by CPU.
+//! Top apps by CPU.
+//!
+//! A modern app is many processes — VS Code alone runs a dozen "Code
+//! Helper"s — so listing processes shows one app several times under names
+//! nobody recognises. Each process is grouped under the outermost `.app`
+//! bundle its executable lives in, and the group reports the summed CPU and
+//! memory under the bundle's name. A process outside any bundle (a daemon in
+//! /usr/sbin) is its own group, under its process name.
 //!
 //! This is the agent's most expensive collector by a wide margin —
 //! `proc_listpids` plus a `proc_pidinfo` and `proc_name` per PID is 1000+
@@ -15,6 +22,10 @@ use crate::ffi::*;
 pub struct ProcCollector {
     /// pid -> (cumulative cpu nanoseconds, timestamp) from the previous pass.
     prev: HashMap<i32, (u64, u64)>,
+    /// pid -> the name it is grouped under. A pid's executable changes only
+    /// on exec, which a running app does not do, so the path lookup runs
+    /// once per process rather than every second.
+    names: HashMap<i32, String>,
     /// Mach absolute time ticks -> nanoseconds. On Apple Silicon this is not
     /// 1:1 (it is 125/3), so using raw ticks as nanoseconds would overstate
     /// every process's CPU by ~41x.
@@ -27,6 +38,7 @@ impl ProcCollector {
         unsafe { mach_timebase_info(&mut tb) };
         Self {
             prev: HashMap::new(),
+            names: HashMap::new(),
             timebase: (tb.numer as u64, tb.denom as u64),
         }
     }
@@ -38,7 +50,8 @@ impl ProcCollector {
     pub fn sample(&mut self, now_ms: u64) -> Vec<Proc> {
         let pids = list_pids();
         let mut current = HashMap::with_capacity(pids.len());
-        let mut scored: Vec<(f32, i32, u64)> = Vec::with_capacity(pids.len());
+        let mut names = HashMap::with_capacity(pids.len());
+        let mut scored: Vec<(f32, i32, u64, String)> = Vec::with_capacity(pids.len());
 
         for pid in pids {
             let Some(info) = task_info(pid) else { continue };
@@ -62,33 +75,74 @@ impl ProcCollector {
                 None => 0.0,
             };
 
-            scored.push((cpu_pct, pid, info.pti_resident_size));
+            let name = match self.names.remove(&pid) {
+                Some(name) => name,
+                None => group_name(pid),
+            };
+            names.insert(pid, name.clone());
+            scored.push((cpu_pct, pid, info.pti_resident_size, name));
         }
 
         self.prev = current;
+        // Rebuilt from this pass, so exited pids drop out and a recycled pid
+        // is looked up afresh.
+        self.names = names;
 
-        // Sort by CPU, breaking ties on resident memory. Without the
-        // tiebreak, an idle machine where everything reads 0.0% produces an
-        // arbitrary top-5 that reshuffles every second.
-        scored.sort_unstable_by(|a, b| {
-            b.0.partial_cmp(&a.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(b.2.cmp(&a.2))
-        });
-        scored.truncate(TOP_PROC_COUNT);
-
-        scored
-            .into_iter()
-            .map(|(cpu, pid, mem)| {
-                Proc::new(
-                    pid,
-                    process_name(pid).unwrap_or_else(|| format!("pid {pid}")),
-                    cpu,
-                    mem,
-                )
-            })
-            .collect()
+        group(scored)
     }
+}
+
+/// The name a process is grouped under: its app bundle, else its own name.
+fn group_name(pid: i32) -> String {
+    if let Some(path) = process_path(pid) {
+        if let Some(app) = app_name(&path) {
+            return app.to_string();
+        }
+    }
+    process_name(pid).unwrap_or_else(|| format!("pid {pid}"))
+}
+
+/// The outermost `.app` bundle in an executable's path, without the
+/// extension. Outermost, because helpers nest their own bundles inside the
+/// app's (`Visual Studio Code.app/.../Code Helper.app/...`).
+fn app_name(path: &str) -> Option<&str> {
+    path.split('/')
+        .find_map(|part| part.strip_suffix(".app"))
+        .filter(|name| !name.is_empty())
+}
+
+/// Sum `(cpu, pid, mem, name)` entries by name, then keep the top groups.
+/// The busiest member's pid stands for the group.
+fn group(scored: Vec<(f32, i32, u64, String)>) -> Vec<Proc> {
+    let mut groups: HashMap<String, (f32, i32, f32, u64)> = HashMap::new();
+    for (cpu, pid, mem, name) in scored {
+        let g = groups.entry(name).or_insert((0.0, pid, f32::MIN, 0));
+        g.0 += cpu;
+        g.3 += mem;
+        if cpu > g.2 {
+            (g.1, g.2) = (pid, cpu);
+        }
+    }
+
+    let mut groups: Vec<_> = groups
+        .into_iter()
+        .map(|(name, (cpu, pid, _, mem))| (cpu, mem, pid, name))
+        .collect();
+    // Sort by CPU, breaking ties on resident memory, then name. Without the
+    // tiebreaks, an idle machine where everything reads 0.0% produces an
+    // arbitrary list that reshuffles every second.
+    groups.sort_unstable_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.1.cmp(&a.1))
+            .then_with(|| a.3.cmp(&b.3))
+    });
+    groups.truncate(TOP_PROC_COUNT);
+
+    groups
+        .into_iter()
+        .map(|(cpu, mem, pid, name)| Proc::new(pid, name, cpu, mem))
+        .collect()
 }
 
 fn list_pids() -> Vec<i32> {
@@ -150,6 +204,23 @@ fn process_name(pid: i32) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
+/// The executable's full path. Fails for processes we may not inspect
+/// (other users' daemons when not root), which then group by name.
+fn process_path(pid: i32) -> Option<String> {
+    let mut buf = [0u8; PROC_PIDPATHINFO_MAXSIZE];
+    let rc = unsafe {
+        proc_pidpath(
+            pid,
+            buf.as_mut_ptr() as *mut std::ffi::c_void,
+            buf.len() as u32,
+        )
+    };
+    if rc <= 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buf[..rc as usize]).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +280,50 @@ mod tests {
         for w in procs.windows(2) {
             assert!(w[0].cpu >= w[1].cpu, "not sorted: {:?}", procs);
         }
+    }
+
+    #[test]
+    fn helpers_belong_to_the_outermost_app() {
+        let code = "/Applications/Visual Studio Code.app/Contents/Frameworks/\
+                    Code Helper.app/Contents/MacOS/Code Helper";
+        assert_eq!(app_name(code), Some("Visual Studio Code"));
+        assert_eq!(
+            app_name("/Applications/Safari.app/Contents/MacOS/Safari"),
+            Some("Safari")
+        );
+        assert_eq!(app_name("/usr/sbin/mDNSResponder"), None);
+        // ".app" must end a path component, not merely appear in one.
+        assert_eq!(app_name("/opt/my.application/bin/run"), None);
+        assert_eq!(app_name("/.app/x"), None);
+    }
+
+    #[test]
+    fn groups_sum_and_keep_the_busiest_pid() {
+        let groups = group(vec![
+            (10.0, 1, 100, "Code".into()),
+            (30.0, 2, 50, "Code".into()),
+            (25.0, 3, 10, "WindowServer".into()),
+        ]);
+        assert_eq!(groups[0].name, "Code");
+        assert_eq!(groups[0].pid, 2, "the busiest member represents the app");
+        assert_eq!(groups[0].cpu, 40.0);
+        assert_eq!(groups[0].mem, 150);
+        assert_eq!(groups[1].name, "WindowServer");
+    }
+
+    #[test]
+    fn idle_groups_order_by_memory() {
+        let groups = group(vec![
+            (0.0, 1, 10, "small".into()),
+            (0.0, 2, 900, "big".into()),
+        ]);
+        assert_eq!(groups[0].name, "big");
+    }
+
+    #[test]
+    fn grouping_caps_at_the_packet_limit() {
+        let many = (0..20).map(|i| (i as f32, i, 0, format!("p{i}"))).collect();
+        assert_eq!(group(many).len(), TOP_PROC_COUNT);
     }
 
     /// On Apple Silicon the timebase is 125/3, not 1/1. Treating ticks as
