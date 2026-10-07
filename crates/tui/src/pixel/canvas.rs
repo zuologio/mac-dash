@@ -159,7 +159,9 @@ impl Canvas {
         for y in y0..y1 {
             for x in x0..x1 {
                 let d = sd_rrect(x as f32 + 0.5, y as f32 + 0.5, s, radius);
-                if d > 0.0 {
+                // Beyond `spread` (the bounding box's corners) k would turn
+                // negative and k*k darken again: a square at each corner.
+                if d > 0.0 && d < spread {
                     let k = 1.0 - d / spread;
                     self.blend(x, y, hex(0x000000), alpha(a, k * k));
                 }
@@ -331,6 +333,16 @@ mod tests {
         assert_eq!(c.get(0, 0), BLACK, "corner is cut");
         let Rgb(r, _, _) = c.get(2, 2);
         assert!(r < 255, "pixel outside the arc is not fully covered");
+    }
+
+    #[test]
+    fn shadows_fade_to_nothing_beyond_their_spread() {
+        let mut c = Canvas::new(60, 60, WHITE);
+        c.shadow(RectF::new(20.0, 20.0, 20.0, 20.0), 6.0, 10.0, 0.0, 255);
+        // The corner of the shadow's bounding box is further than `spread`
+        // from the rounded rectangle: it must stay untouched.
+        assert_eq!(c.get(11, 11), WHITE);
+        assert_ne!(c.get(19, 30), WHITE);
     }
 
     #[test]
