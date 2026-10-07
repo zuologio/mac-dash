@@ -205,6 +205,34 @@ macdash-tui --port 0      # --port 0 because the service already uses port 9999
 App percentages count one core as 100%, so they can add up to more than the
 big figure. Network rates are in bytes per second (`K` = 1024 bytes).
 
+## How it works
+
+There are two small programs: an **agent** on the Mac that measures, and a
+**display** on the Pi that draws.
+
+**Finding each other.** Every 3 seconds the Pi sends a tiny "I'm here" message
+to a UDP multicast group (`239.255.42.99:9998`) on the local network. The
+agent listens there and sends to wherever the messages come from. Nobody types
+an IP address, and a Pi that reboots or gets a new address is found again
+within seconds.
+
+**Sending the numbers.** Five times a second the agent reads the Mac's stats
+straight from macOS (CPU, memory, temperature, network, top apps). It sends
+them as one small JSON message in a single UDP packet to port 9999. There is no
+connection to keep alive: if a packet is lost, the next one arrives 200 ms
+later. Each packet is a complete snapshot, kept under 1400 bytes so the network
+never has to split it. The Pi shows the data as `STALE` when packets stop
+coming, and turns the screen off when the Mac sleeps.
+
+**Drawing the screen.** The polished dashboard doesn't use the terminal at all.
+The Pi has no desktop, browser or GPU toolkit. The display program draws every
+pixel itself: rounded cards, smooth edges, charts and the Inter font, built
+into the program. Then it writes the finished image straight into Linux's
+framebuffer (`/dev/fb0`), which is the screen's memory. To stay fast on a
+Pi Zero, it redraws only the parts of the screen that changed. When the
+framebuffer isn't available (over SSH, or in a Mac terminal), the same data is
+drawn as a text dashboard with [ratatui](https://ratatui.rs) instead.
+
 ## Troubleshooting
 
 **The screen stays on `WAITING`.** Make sure the agent is running on the Mac
