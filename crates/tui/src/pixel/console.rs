@@ -78,6 +78,19 @@ pub fn install_stop_handlers() {
     }));
 }
 
+/// Put SIGTERM, SIGINT and SIGHUP back to their default action, for when
+/// the pixel renderer did not start: the text loop never checks
+/// `stop_requested`, so with the handlers left in place it could not be
+/// stopped. The panic hook stays; it does nothing outside graphics mode.
+pub fn remove_stop_handlers() {
+    // SAFETY: restoring the default disposition.
+    unsafe {
+        libc::signal(libc::SIGTERM, libc::SIG_DFL);
+        libc::signal(libc::SIGINT, libc::SIG_DFL);
+        libc::signal(libc::SIGHUP, libc::SIG_DFL);
+    }
+}
+
 pub fn stop_requested() -> bool {
     STOP.load(Ordering::SeqCst)
 }

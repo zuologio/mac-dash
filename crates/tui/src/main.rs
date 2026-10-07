@@ -165,17 +165,17 @@ fn now_ms() -> u64 {
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
-/// The framebuffer to draw pixels on, or None for the text renderer: when
-/// --text was given, when this is not the Linux console (SSH, a Mac
-/// terminal), or when the framebuffer cannot be used. A failure is logged
-/// and the text dashboard runs instead, so the panel is never left blank.
-fn pixel_framebuffer(text: bool) -> Option<pixel::framebuffer::Framebuffer> {
+/// The pixel renderer, started, or None for the text renderer: when --text
+/// was given, when this is not the Linux console (SSH, a Mac terminal), or
+/// when any part of pixel startup fails. A failure is logged and the text
+/// dashboard runs instead, so the panel is never left blank.
+fn pixel_session(text: bool) -> Option<pixel::run::PixelSession> {
     if text || std::env::var("TERM").as_deref() != Ok("linux") {
         return None;
     }
-    use pixel::framebuffer::{Framebuffer, FB_PATH, ROTATE_PATH};
-    match Framebuffer::open(FB_PATH, ROTATE_PATH) {
-        Ok(fb) => Some(fb),
+    use pixel::framebuffer::{FB_PATH, ROTATE_PATH};
+    match pixel::run::PixelSession::start(FB_PATH, ROTATE_PATH, "/dev/tty") {
+        Ok(session) => Some(session),
         Err(e) => {
             eprintln!("macdash: pixels unavailable ({e}); using the text console");
             None
@@ -237,13 +237,12 @@ fn main() {
         None
     };
 
-    let result = match pixel_framebuffer(args.text) {
-        Some(fb) => {
+    let result = match pixel_session(args.text) {
+        Some(session) => {
             eprintln!("macdash: drawing to {}", pixel::framebuffer::FB_PATH);
-            // Rewrapped without the errno: a console that refuses graphics
-            // mode fails with ENOTTY, which must not get the text
+            // Rewrapped without the errno, so it never gets the text
             // renderer's "stdout is not a terminal" advice below.
-            pixel::run::run(fb, rx, &mut backlight, &mut hdmi, now_ms)
+            pixel::run::run(session, rx, &mut backlight, &mut hdmi, now_ms)
                 .map_err(|e| io::Error::other(format!("pixel dashboard: {e}")))
         }
         None => run(rx, &mut backlight, &mut hdmi, args.font.as_deref()),
