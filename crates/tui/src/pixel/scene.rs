@@ -7,12 +7,17 @@
 //!
 //! On top of it the screen is split into regions with fixed rectangles
 //! that change at different rates: the menu strip, the CPU number, the
-//! cores, the CPU chart, and the other cards. Each frame every region turns
-//! what it is about to draw into a model, and only a region whose model
-//! changed is redrawn (its rectangle copied back from the static layer, its
-//! values drawn clipped to it). The frame reports those rectangles, so the
-//! framebuffer packs and writes only them. A chart whose only change is its
-//! newest point redraws just its last segment.
+//! cores, the CPU chart, and the other cards. Each region turns what it
+//! will draw into a model, and the model into keys: one for the region as
+//! a whole and one per cell, a smaller rectangle inside it (a core's
+//! capsule, the big number, a chart's newest segment, a process's CPU
+//! column). Only what changed is redrawn: its rectangle is copied back from
+//! the static layer and the model drawn clipped to it. The frame reports
+//! those rectangles, so the framebuffer packs and writes only them.
+//!
+//! Models that depend only on the packets are rebuilt when a packet
+//! arrives or the presence changes; between packets only the gliding CPU
+//! number and cores are, which is what makes a 10 Hz glide cheap.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -59,15 +64,25 @@ pub enum Part {
 const PARTS: [Part; 8] =
     [Part::Menu, Part::CpuValue, Part::CpuCores, Part::CpuChart, Part::Memory, Part::Temp, Part::Net, Part::Procs];
 
+impl Part {
+    /// Parts drawn from gliding values: their models change between
+    /// packets.
+    fn eased(self) -> bool {
+        matches!(self, Part::CpuValue | Part::CpuCores)
+    }
+}
+
 struct Region {
     part: Part,
     rect: IRect,
     /// The card the region belongs to, for the dim overlay.
     card: Option<RectF>,
-    /// The last segment of the region's chart, if it has one.
-    tail: Option<IRect>,
+    /// What the region shows now, and the keys it was drawn with.
+    model: Option<Model>,
     key: Option<u64>,
-    tail_key: Option<u64>,
+    cells: Vec<(IRect, u64)>,
+    /// The packet count and presence `model` was built for.
+    stamp: Option<(u64, Presence)>,
 }
 
 pub struct Scene {
@@ -123,8 +138,8 @@ impl Scene {
     }
 
     #[cfg(test)]
-    fn tail(&self, part: Part) -> Option<IRect> {
-        self.regions.iter().find(|r| r.part == part).and_then(|r| r.tail)
+    fn cells(&self, part: Part) -> Vec<IRect> {
+        self.regions.iter().find(|r| r.part == part).map(|r| r.cells.iter().map(|c| c.0).collect()).unwrap()
     }
 
     /// Redraw everything next frame: the panel may not show what this
@@ -144,53 +159,66 @@ impl Scene {
             self.invalid = true;
         }
         let full = std::mem::take(&mut self.invalid);
-        if full {
-            self.frame.copy_from(&self.base);
-            for r in &mut self.regions {
-                (r.key, r.tail_key) = (None, None);
-            }
-        }
+        let stamp = (dash.packets_received, presence);
+        let (w, h) = (self.frame.w, self.frame.h);
 
-        // Decide first, draw second: overlapping regions redraw together.
-        let mut plan: Vec<(usize, Model, bool)> = Vec::new();
-        for (i, r) in self.regions.iter().enumerate() {
-            let Some(model) = model(r.part, &self.l, &mut self.t, dash, presence, now_ms) else { continue };
-            let (body, tail) = model.keys(dimmed);
-            if r.key != Some(body) || (r.tail_key != Some(tail) && r.tail.is_none()) {
-                plan.push((i, model, true));
-            } else if r.tail_key != Some(tail) {
-                plan.push((i, model, false));
+        let mut dirty: Vec<(usize, IRect)> = Vec::new();
+        for (i, r) in self.regions.iter_mut().enumerate() {
+            if !(full || r.part.eased() || r.stamp != Some(stamp)) {
+                continue;
             }
-        }
-        if self.overlap && !plan.is_empty() {
-            plan.clear();
-            for (i, r) in self.regions.iter().enumerate() {
-                if let Some(m) = model(r.part, &self.l, &mut self.t, dash, presence, now_ms) {
-                    plan.push((i, m, true));
+            r.stamp = Some(stamp);
+            let Some(model) = model(r.part, &self.l, &mut self.t, dash, presence, now_ms) else {
+                r.model = None;
+                continue;
+            };
+            let key = hash((model.whole(), dimmed));
+            let cells: Vec<(IRect, u64)> = model
+                .cells(&self.l)
+                .into_iter()
+                .filter_map(|(c, k)| Some((intersect(outer(c, w, h), r.rect)?, k)))
+                .collect();
+            let same_cells = cells.len() == r.cells.len() && cells.iter().zip(&r.cells).all(|(a, b)| a.0 == b.0);
+            if r.key != Some(key) || !same_cells {
+                dirty.push((i, r.rect));
+            } else {
+                for (new, old) in cells.iter().zip(&r.cells) {
+                    if new.1 != old.1 {
+                        dirty.push((i, new.0));
+                    }
                 }
             }
+            (r.model, r.key, r.cells) = (Some(model), Some(key), cells);
         }
 
-        let mut dirty = Vec::new();
-        for (i, model, whole) in plan {
-            let (body, tail) = model.keys(dimmed);
-            let r = &mut self.regions[i];
-            let rect = if whole { r.rect } else { r.tail.unwrap_or(r.rect) };
-            (r.key, r.tail_key) = (Some(body), Some(tail));
-            let card = r.card;
-            self.frame.copy_rect_from(&self.base, rect);
-            self.frame.set_clip(Some(rect));
-            draw(&mut self.frame, &mut self.t, &self.l, &model);
-            if let (true, Some(card)) = (dimmed, card) {
-                self.frame.rrect(card, RADIUS, BLACK, DIM_ALPHA);
+        if full || (self.overlap && !dirty.is_empty()) {
+            // Everything, in one pass: also the path for screens so small
+            // that regions overlap, where a region's background copy would
+            // wipe its neighbour.
+            self.frame.copy_from(&self.base);
+            dirty = self.regions.iter().enumerate().map(|(i, r)| (i, r.rect)).collect();
+            for &(i, rect) in &dirty {
+                self.draw_region(i, rect, dimmed);
             }
-            self.frame.set_clip(None);
-            dirty.push(rect);
+            return Frame { canvas: &self.frame, dirty: vec![IRect::new(0, 0, w, h)] };
         }
-        if full {
-            dirty = vec![IRect::new(0, 0, self.frame.w, self.frame.h)];
+        for &(i, rect) in &dirty {
+            self.frame.copy_rect_from(&self.base, rect);
+            self.draw_region(i, rect, dimmed);
         }
-        Frame { canvas: &self.frame, dirty }
+        Frame { canvas: &self.frame, dirty: dirty.into_iter().map(|(_, r)| r).collect() }
+    }
+
+    /// Draw region `i`'s model, and its dim overlay, clipped to `rect`.
+    fn draw_region(&mut self, i: usize, rect: IRect, dimmed: bool) {
+        let r = &self.regions[i];
+        let Some(model) = &r.model else { return };
+        self.frame.set_clip(Some(rect));
+        draw(&mut self.frame, &mut self.t, &self.l, model);
+        if let (true, Some(card)) = (dimmed, r.card) {
+            self.frame.rrect(card, RADIUS, BLACK, DIM_ALPHA);
+        }
+        self.frame.set_clip(None);
     }
 
     fn build_static(&mut self, waiting: bool) {
@@ -263,6 +291,18 @@ fn intersect(a: IRect, b: IRect) -> Option<IRect> {
     (x0 < x1 && y0 < y1).then(|| IRect::new(x0, y0, x1 - x0, y1 - y0))
 }
 
+/// Whole pixels a rectangle touches: for cells, which must cover every
+/// anti-aliased edge of what they hold.
+fn outer(r: RectF, w: usize, h: usize) -> IRect {
+    if !(r.x.is_finite() && r.y.is_finite() && r.w.is_finite() && r.h.is_finite()) {
+        return IRect::new(0, 0, 0, 0);
+    }
+    let edge = |v: f32, max: usize| (v.max(0.0) as usize).min(max);
+    let (x0, y0) = (edge(r.x.floor(), w), edge(r.y.floor(), h));
+    let (x1, y1) = (edge((r.x + r.w.max(0.0)).ceil(), w), edge((r.y + r.h.max(0.0)).ceil(), h));
+    IRect::new(x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0))
+}
+
 /// The region rectangles. The CPU card is cut in three; every other card is
 /// one region; together they cover every card, so the dim overlay reaches
 /// all of them.
@@ -273,33 +313,26 @@ fn regions(l: &Layout, w: usize, h: usize) -> Vec<Region> {
     PARTS
         .iter()
         .map(|&part| {
-            let (rect, card, chart) = match part {
-                Part::Menu => (RectF::new(0.0, 0.0, w as f32, MENU_H), None, None),
-                Part::CpuValue => (RectF::new(r.x, r.y, sx, sy), Some(r), None),
-                Part::CpuCores => (RectF::new(r.x + sx, r.y, r.w - sx, sy), Some(r), None),
-                Part::CpuChart => (
-                    RectF::new(r.x, r.y + sy, r.w, r.h - sy),
-                    Some(r),
-                    Some((cpu_chart(r), CPU_COLS)),
-                ),
-                Part::Memory => (l.memory, Some(l.memory), None),
-                Part::Temp => (l.temp, Some(l.temp), Some((trend_area(l.temp, 112.0), trend_cols(l.temp, 112.0)))),
-                Part::Net => (l.net, Some(l.net), Some((trend_area(l.net, 106.0), trend_cols(l.net, 106.0)))),
-                Part::Procs => (l.procs, Some(l.procs), None),
+            let (rect, card) = match part {
+                Part::Menu => (RectF::new(0.0, 0.0, w as f32, MENU_H), None),
+                Part::CpuValue => (RectF::new(r.x, r.y, sx, sy), Some(r)),
+                Part::CpuCores => (RectF::new(r.x + sx, r.y, r.w - sx, sy), Some(r)),
+                Part::CpuChart => (RectF::new(r.x, r.y + sy, r.w, r.h - sy), Some(r)),
+                Part::Memory => (l.memory, Some(l.memory)),
+                Part::Temp => (l.temp, Some(l.temp)),
+                Part::Net => (l.net, Some(l.net)),
+                Part::Procs => (l.procs, Some(l.procs)),
             };
             let rect = to_irect(rect, w, h);
-            let tail = chart.filter(|(c, _)| !c.is_empty()).and_then(|(c, cols)| {
-                let right = c.x + c.w;
-                let pitch = pitch(c, cols);
-                // The last segment, and the columns either side whose
-                // anti-aliasing reads its end points.
-                let x0 = (right - pitch).floor() - 3.0;
-                let x1 = right.ceil() + 2.0;
-                intersect(to_irect(RectF::new(x0, 0.0, x1 - x0, h as f32), w, h), rect)
-            });
-            Region { part, rect, card, tail, key: None, tail_key: None }
+            Region { part, rect, card, model: None, key: None, cells: Vec::new(), stamp: None }
         })
         .collect()
+}
+
+fn hash(v: impl Hash) -> u64 {
+    let mut h = DefaultHasher::new();
+    v.hash(&mut h);
+    h.finish()
 }
 
 /// What each region draws: everything that decides its pixels, and
@@ -363,45 +396,117 @@ struct Chart {
 }
 
 impl Chart {
-    fn body(&self, h: &mut impl Hasher) {
-        for s in &self.series {
-            s.len().hash(h);
-            s[..s.len().saturating_sub(1)].hash(h);
-        }
+    /// Everything but the newest point of each series.
+    fn body(&self) -> u64 {
+        hash(self.series.iter().map(|s| &s[..s.len().saturating_sub(1)]).collect::<Vec<_>>())
     }
 
-    fn tail(&self, h: &mut impl Hasher) {
-        for s in &self.series {
-            s[s.len().saturating_sub(2)..].hash(h);
-        }
+    /// The newest point of each series, which only reaches `tail_rect`.
+    fn tail(&self) -> u64 {
+        hash(self.series.iter().map(|s| s.last()).collect::<Vec<_>>())
     }
 }
 
+/// The part of a chart that its newest point reaches: the last segment,
+/// and the columns either side whose anti-aliasing reads its end points.
+fn tail_rect(chart: RectF, cols: usize) -> RectF {
+    let right = chart.x + chart.w;
+    let x0 = (right - pitch(chart, cols)).floor() - 3.0;
+    RectF::new(x0, chart.y - 3.0, right + 3.0 - x0, chart.h + 6.0)
+}
+
 impl Model {
-    /// The region's key and its chart tail's key. Every pixel outside the
-    /// tail depends only on the first; the tail on both.
-    fn keys(&self, dimmed: bool) -> (u64, u64) {
-        let (mut body, mut tail) = (DefaultHasher::new(), DefaultHasher::new());
-        dimmed.hash(&mut body);
-        std::mem::discriminant(self).hash(&mut body);
+    /// The key for every pixel of the region outside its cells.
+    fn whole(&self) -> u64 {
         match self {
-            Model::CpuChart(c) => {
-                c.body(&mut body);
-                c.tail(&mut tail);
+            Model::CpuValue { .. } | Model::Memory { .. } => hash(0),
+            Model::Cores(v) => hash(v.len()),
+            Model::CpuChart(c) => c.body(),
+            // Their charts' bodies are cells: a column step leaves the text.
+            Model::Temp { .. } | Model::Net { .. } => hash(1),
+            Model::Procs(rows) => hash(rows.len()),
+            Model::Menu { .. } => hash(self),
+        }
+    }
+
+    /// Rectangles inside the region with the key of what each shows.
+    /// Each must bound everything its key covers: a change outside the
+    /// cells has to change `whole`.
+    fn cells(&self, l: &Layout) -> Vec<(RectF, u64)> {
+        match self {
+            Model::Menu { .. } => Vec::new(),
+            Model::CpuValue { big, finite, user, sys, load } => {
+                let (r, sx) = (l.cpu, CPU_SPLIT_X.min(l.cpu.w));
+                let caption = |x0: f32, x1: f32| RectF::new(r.x + x0, r.y + 106.0, x1 - x0, 50.0);
+                vec![
+                    (RectF::new(r.x + 10.0, r.y + 40.0, sx - 10.0, 66.0), hash((big, finite))),
+                    (caption(10.0, 82.0), hash(user)),
+                    (caption(82.0, 154.0), hash(sys)),
+                    (caption(154.0, sx), hash(load)),
+                ]
+            }
+            Model::Cores(cores) => core_slots(core_area(l.cpu), cores.len())
+                .into_iter()
+                .zip(cores)
+                .flat_map(|(s, &v)| capsule_stripes(s, v))
+                .collect(),
+            Model::CpuChart(c) => vec![(tail_rect(cpu_chart(l.cpu), CPU_COLS), c.tail())],
+            Model::Memory { frac, ring, pct, used, of, pressure, compressed, swap } => {
+                let r = l.memory;
+                let k = (r.h / 150.0).clamp(0.0, 1.0);
+                let (cx, cy, reach) = (r.x + 72.0, r.y + 92.0 * k, 47.0 * k + 2.0);
+                vec![
+                    (RectF::new(cx - reach, cy - reach, 2.0 * reach, 2.0 * reach), hash((frac, ring, pct))),
+                    (RectF::new(r.x + 130.0, r.y, r.w - 130.0, r.h), hash((used, of, pressure, compressed, swap))),
+                ]
             }
             Model::Temp { value, battery, chart } => {
-                (value, battery).hash(&mut body);
-                chart.body(&mut body);
-                chart.tail(&mut tail);
+                let r = l.temp;
+                let mut v = vec![
+                    (RectF::new(r.x + 10.0, r.y + 40.0, r.w - 20.0, 48.0), hash(value)),
+                    (RectF::new(r.x + 64.0, r.y + 88.0, r.w - 74.0, 18.0), hash(battery)),
+                ];
+                let trend = trend_area(r, 112.0);
+                if !trend.is_empty() {
+                    let body = RectF::new(trend.x - 3.0, trend.y - 3.0, trend.w + 6.0, trend.h + 6.0);
+                    v.push((body, chart.body()));
+                    v.push((tail_rect(trend, trend_cols(r, 112.0)), chart.tail()));
+                }
+                v
             }
             Model::Net { rx, tx, chart } => {
-                (rx, tx).hash(&mut body);
-                chart.body(&mut body);
-                chart.tail(&mut tail);
+                let r = l.net;
+                let mut v = vec![
+                    (RectF::new(r.x + 10.0, r.y + 40.0, r.w - 20.0, 30.0), hash(rx)),
+                    (RectF::new(r.x + 10.0, r.y + 70.0, r.w - 20.0, 30.0), hash(tx)),
+                ];
+                let trend = trend_area(r, 106.0);
+                if !trend.is_empty() {
+                    let body = RectF::new(trend.x - 3.0, trend.y - 3.0, trend.w + 6.0, trend.h + 6.0);
+                    v.push((body, chart.body()));
+                    v.push((tail_rect(trend, trend_cols(r, 106.0)), chart.tail()));
+                }
+                v
             }
-            other => other.hash(&mut body),
+            Model::Procs(rows) => {
+                let r = l.procs;
+                let (cpu_right, _, _, name_max) = proc_columns(r);
+                // Name and icon, the bar and CPU figure, the memory figure.
+                let xs = [r.x + 10.0, r.x + 46.0 + name_max + 4.0, cpu_right + 4.0, r.x + r.w - 10.0];
+                rows.iter()
+                    .enumerate()
+                    .flat_map(|(i, row)| {
+                        let y = r.y + 44.0 + i as f32 * ROW_H;
+                        let cell = move |j: usize| RectF::new(xs[j], y, xs[j + 1] - xs[j], ROW_H);
+                        [
+                            (cell(0), hash((&row.initial, row.color, &row.name))),
+                            (cell(1), hash((row.cpu, &row.cpu_s))),
+                            (cell(2), hash(&row.mem)),
+                        ]
+                    })
+                    .collect()
+            }
         }
-        (body.finish(), tail.finish())
     }
 }
 
@@ -601,13 +706,16 @@ fn draw(c: &mut Canvas, t: &mut Typefaces, l: &Layout, m: &Model) {
         }
         Model::Cores(cores) => {
             let r = l.cpu;
-            let slots = core_slots(RectF::new(r.x + 336.0, r.y + 42.0, r.w - 356.0, 86.0), cores.len());
+            let slots = core_slots(core_area(r), cores.len());
             for (i, (s, &v)) in slots.iter().zip(cores).enumerate() {
+                // A capsule redraw is clipped to that capsule: skip the rest.
+                let (x0, y0) = (s.x.floor() as i32 - 4, s.y.floor() as i32 - 1);
+                if !c.visible(x0, y0, (s.x + s.w).ceil() as i32 + 4, (s.y + s.h).ceil() as i32 + 20) {
+                    continue;
+                }
                 c.rrect(*s, s.w / 2.0, WELL, 255);
-                let v = v as f32 / 10.0;
-                let fh = (s.h * v / 100.0).max(s.w);
-                let fill = RectF::new(s.x, s.y + s.h - fh, s.w, fh);
-                c.rrect(fill, s.w / 2.0, severity(v, ACCENT), if v < 1.0 { 90 } else { 255 });
+                let (fill, col, a) = capsule_fill(*s, v);
+                c.rrect(fill, s.w / 2.0, col, a);
                 if s.w >= 10.0 || i % 2 == 0 {
                     let n = (i + 1).to_string();
                     let nw = t.width(Face::Regular, 10.0, &n);
@@ -716,6 +824,44 @@ fn trend_cols(card: RectF, top: f32) -> usize {
 /// packet rate so the caption cannot drift from the data again.
 fn history_caption() -> String {
     format!("{} min", HISTORY as u64 * STATS_INTERVAL_MS / 60_000)
+}
+
+/// A core's fill inside its capsule, from its load in tenths of a percent:
+/// the rectangle, colour and alpha.
+fn capsule_fill(s: RectF, tenths: u16) -> (RectF, Rgb, u8) {
+    let v = tenths as f32 / 10.0;
+    let fh = (s.h * v / 100.0).max(s.w);
+    (RectF::new(s.x, s.y + s.h - fh, s.w, fh), severity(v, ACCENT), if v < 1.0 { 90 } else { 255 })
+}
+
+/// A capsule as cells: 8 px stripes, each keyed by the fill's top edge
+/// clamped to the rows that edge (and its rounded cap) can reach in that
+/// stripe. A stripe wholly above or below the edge keeps its key as the
+/// load moves, so a moving bar redraws only the stripes around its top
+/// (and the bottom one).
+fn capsule_stripes(s: RectF, tenths: u16) -> Vec<(RectF, u64)> {
+    const STRIPE: f32 = 8.0;
+    let (fill, col, a) = capsule_fill(s, tenths);
+    let reach = s.w / 2.0 + 2.0;
+    let (y0, y1) = (s.y.floor() - 1.0, (s.y + s.h).ceil() + 1.0);
+    let mut out = Vec::new();
+    let mut y = y0;
+    while y < y1 {
+        let h = STRIPE.min(y1 - y);
+        let top = fill.y.clamp(y - reach, y + h + 2.0);
+        // The bottom cap is computed from the fill's centre, which moves
+        // with its height: rounding there can differ by a step.
+        let near_bottom = y + h + 2.0 >= s.y + s.h - reach;
+        let exact = near_bottom.then(|| fill.y.to_bits());
+        out.push((RectF::new(s.x - 1.0, y, s.w + 2.0, h), hash((col, a, top.to_bits(), exact))));
+        y += STRIPE;
+    }
+    out
+}
+
+/// Where the CPU card's core capsules go.
+fn core_area(cpu: RectF) -> RectF {
+    RectF::new(cpu.x + 336.0, cpu.y + 42.0, cpu.w - 356.0, 86.0)
 }
 
 /// The CPU card's history chart.
@@ -898,9 +1044,6 @@ mod tests {
             if let Some(card) = a.card {
                 assert!(contains(to_irect(card, 1024, 600), a.rect), "{:?} outside its card", a.part);
             }
-            if let Some(t) = a.tail {
-                assert!(contains(a.rect, t), "{:?} tail outside the region", a.part);
-            }
             for b in &rs[i + 1..] {
                 assert!(intersect(a.rect, b.rect).is_none(), "{:?} overlaps {:?}", a.part, b.part);
             }
@@ -909,6 +1052,20 @@ mod tests {
         let cpu = to_irect(l.cpu, 1024, 600);
         let area: usize = rs.iter().filter(|r| r.card == Some(l.cpu)).map(|r| r.rect.w * r.rect.h).sum();
         assert_eq!(area, cpu.w * cpu.h);
+    }
+
+    #[test]
+    fn cells_sit_inside_their_regions() {
+        let mut s = Scene::new(1024, 600);
+        s.render(&dash(packet(24, 10)), 12_000);
+        for part in PARTS {
+            let region = s.region(part);
+            for c in s.cells(part) {
+                assert!(c.w > 0 && c.h > 0 && contains(region, c), "{part:?}: {c:?} outside {region:?}");
+            }
+        }
+        assert_eq!(s.cells(Part::CpuCores).len(), 10 * 11, "11 stripes a capsule");
+        assert_eq!(s.cells(Part::Procs).len(), 3 * 6);
     }
 
     #[test]
@@ -944,12 +1101,16 @@ mod tests {
         p.cpu.total = Some(70.0);
         d.ingest(p, 12_000);
         let dirty = s.render(&d, 12_100).dirty;
-        let tail = s.tail(Part::CpuChart).unwrap();
-        assert!(dirty.contains(&s.region(Part::CpuValue)), "{dirty:?}");
+        let number = s.cells(Part::CpuValue)[0];
+        let tail = s.cells(Part::CpuChart)[0];
+        assert!(dirty.contains(&number), "{dirty:?}");
         assert!(dirty.contains(&tail), "{dirty:?}");
-        assert!(!dirty.contains(&s.region(Part::CpuChart)), "whole chart redrawn: {dirty:?}");
-        assert!(!dirty.contains(&s.region(Part::Procs)));
-        assert!(!dirty.contains(&s.region(Part::Memory)));
+        let screen = 1024 * 600;
+        let area: usize = dirty.iter().map(|r| r.w * r.h).sum();
+        assert!(area * 100 < screen * 6, "{}% of the screen: {dirty:?}", area * 100 / screen);
+        for part in [Part::CpuChart, Part::Memory, Part::Procs, Part::Net, Part::Temp] {
+            assert!(!dirty.contains(&s.region(part)), "{part:?} redrawn whole: {dirty:?}");
+        }
     }
 
     #[test]
@@ -958,14 +1119,32 @@ mod tests {
         let mut d = dash(packet(10, 10));
         let mut t = 12_000;
         s.render(&d, t);
-        for k in 0..12u64 {
+        for k in 0..16u64 {
             let mut p = packet(10 + k as usize % 3, 10);
             p.cpu.total = Some((k * 13 % 90) as f32);
             p.cpu.sys = Some((k * 7 % 20) as f32);
             p.cpu.cores = (0..10).map(|i| ((i + k as usize) * 11 % 100) as f32).collect();
+            p.cpu.user = Some((k * 5 % 30) as f32 + 0.25);
+            p.cpu.load = [k as f32 * 0.37, 2.0, 99.99];
             p.mem.used += k << 26;
+            p.mem.pressure = (k * 9 % 100) as f32;
+            p.mem.swap_used = if k % 4 == 0 { 0 } else { k << 30 };
+            p.mem.compressed = (k + 1) << 29;
             if let Some(n) = p.net.as_mut() {
                 n.rx_bps = Some(1000 + k * 40_000);
+                n.tx_bps = if k % 5 == 0 { None } else { Some(k * 999_999) };
+            }
+            p.temp = if k % 6 == 5 { None } else { Some(Temp { soc: Some(40.0 + k as f32 * 4.0), gpu: None, battery: (k % 3 != 0).then_some(25.0 + k as f32) }) };
+            p.uptime_s += k * 3600;
+            // The Mac's display sleeps for a while: dimmed, values still moving.
+            p.display_asleep = Some((4..8).contains(&k));
+            p.procs.truncate(8 - (k as usize % 4));
+            for (j, pr) in p.procs.iter_mut().enumerate() {
+                pr.cpu = ((k as usize * 17 + j * 31) % 120) as f32 + 0.05;
+                pr.mem = ((k + j as u64) % 5) << 28;
+                if (k as usize + j) % 3 == 0 {
+                    pr.name = format!("proc{k}{j}");
+                }
             }
             t += 200;
             d.ingest(p, t);
@@ -973,7 +1152,8 @@ mod tests {
                 let partial = snap(s.render(&d, t + dt));
                 let mut fresh = Scene::new(1024, 600);
                 let whole = snap(fresh.render(&d, t + dt));
-                assert_eq!(differs(&partial, &whole), 0, "packet {k} +{dt} ms");
+                let at: Vec<(usize, usize, Rgb, Rgb)> = partial.px.iter().zip(&whole.px).enumerate().filter(|(_, (a, b))| a != b).map(|(i, (a, b))| (i % 1024, i / 1024, *a, *b)).take(5).collect();
+                assert_eq!(differs(&partial, &whole), 0, "packet {k} +{dt} ms: {at:?}");
             }
         }
         // Dimmed too: going stale redraws every region dimmed.

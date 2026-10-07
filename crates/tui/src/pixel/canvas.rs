@@ -92,6 +92,13 @@ impl Canvas {
         c
     }
 
+    /// Whether any pixel of [x0, x1) x [y0, y1) can be drawn: lets a caller
+    /// skip work the clip rectangle would throw away.
+    pub fn visible(&self, x0: i32, y0: i32, x1: i32, y1: i32) -> bool {
+        let [cx0, cy0, cx1, cy1] = self.clip;
+        x0 < cx1 && x1 > cx0 && y0 < cy1 && y1 > cy0
+    }
+
     /// Limit drawing to `r` (and the canvas); `None` draws anywhere again.
     pub fn set_clip(&mut self, r: Option<IRect>) {
         let (w, h) = (self.w.min(i32::MAX as usize), self.h.min(i32::MAX as usize));

@@ -6,6 +6,7 @@
 //! dashboard redraws the same few dozen glyphs every frame.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use fontdue::{Font, FontSettings, Metrics};
 
@@ -22,9 +23,33 @@ pub enum Face {
 
 const ELLIPSIS: char = '…';
 
+/// FNV-1a for the glyph cache: its keys are a few small integers, and the
+/// default SipHash was a visible share of a frame on the Pi Zero.
+struct Fnv(u64);
+
+impl Default for Fnv {
+    fn default() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl Hasher for Fnv {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u64).wrapping_mul(0x100_0000_01b3);
+        }
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type GlyphKey = (Face, char, u32);
+
 pub struct Typefaces {
     fonts: [Font; 4],
-    cache: HashMap<(Face, char, u32), (Metrics, Vec<u8>)>,
+    cache: HashMap<GlyphKey, (Metrics, Vec<u8>), BuildHasherDefault<Fnv>>,
 }
 
 impl Typefaces {
@@ -39,7 +64,7 @@ impl Typefaces {
                 load(include_bytes!("../../assets/fonts/Inter-SemiBold.ttf")),
                 load(include_bytes!("../../assets/fonts/InterDisplay-SemiBold.ttf")),
             ],
-            cache: HashMap::new(),
+            cache: HashMap::default(),
         }
     }
 
@@ -71,6 +96,11 @@ impl Typefaces {
             let (m, bmp) = self.glyph(face, size, ch);
             let ox = pen.round() as i32 + m.xmin;
             let oy = baseline.round() as i32 - m.height as i32 - m.ymin;
+            let (gw, gh) = (m.width as i32, m.height as i32);
+            if !c.visible(ox, oy, ox.saturating_add(gw), oy.saturating_add(gh)) {
+                pen += m.advance_width;
+                continue;
+            }
             for j in 0..m.height {
                 for i in 0..m.width {
                     let cov = bmp[j * m.width + i] as u32;
