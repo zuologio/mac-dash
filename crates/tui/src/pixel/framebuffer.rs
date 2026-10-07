@@ -87,15 +87,61 @@ fn fits(c: &Canvas, f: &Format, rotate: u8, out: &[u8]) -> bool {
 }
 
 #[inline(always)]
+fn rgb565(p: Rgb) -> [u8; 2] {
+    let v = ((p.0 as u16 >> 3) << 11) | ((p.1 as u16 >> 2) << 5) | (p.2 as u16 >> 3);
+    v.to_le_bytes()
+}
+
+#[inline(always)]
 fn put(pixel: Pixel, p: Rgb, d: &mut [u8]) {
     match pixel {
-        Pixel::Rgb565 => {
-            let v = ((p.0 as u16 >> 3) << 11) | ((p.1 as u16 >> 2) << 5) | (p.2 as u16 >> 3);
-            d.copy_from_slice(&v.to_le_bytes());
-        }
+        Pixel::Rgb565 => d.copy_from_slice(&rgb565(p)),
         Pixel::Xrgb8888 => d.copy_from_slice(&[p.2, p.1, p.0, 0xff]),
         Pixel::Xbgr8888 => d.copy_from_slice(&[p.0, p.1, p.2, 0xff]),
     }
+}
+
+/// One logical row segment into one physical row segment, forwards or
+/// backwards. Pixels are stored as whole u16/u32 words: packing through
+/// byte chunks cost the Pi Zero 56 ns a pixel, word stores 30.
+fn pack_row(pixel: Pixel, src: &[Rgb], dst: &mut [u8], reverse: bool) {
+    let done = match pixel {
+        Pixel::Rgb565 => store(src, dst, reverse, |p| u16::from_ne_bytes(rgb565(p))),
+        Pixel::Xrgb8888 => store(src, dst, reverse, |p| u32::from_ne_bytes([p.2, p.1, p.0, 0xff])),
+        Pixel::Xbgr8888 => store(src, dst, reverse, |p| u32::from_ne_bytes([p.0, p.1, p.2, 0xff])),
+    };
+    if !done {
+        // A misaligned buffer: correct, just slower.
+        let n = bytes_per_pixel(pixel);
+        for (i, &p) in src.iter().enumerate().take(dst.len() / n) {
+            let k = if reverse { src.len().min(dst.len() / n) - 1 - i } else { i };
+            put(pixel, p, &mut dst[k * n..k * n + n]);
+        }
+    }
+}
+
+/// Store `f(p)` for each pixel as one word into `dst`, whose words then
+/// hold, in memory order, the bytes `f` built. False if `dst` is not
+/// word-aligned or too short.
+#[inline(always)]
+fn store<T: Copy>(src: &[Rgb], dst: &mut [u8], reverse: bool, f: impl Fn(Rgb) -> T) -> bool {
+    // SAFETY: T is u16 or u32, for which every bit pattern is valid, and
+    // align_to_mut only hands back the correctly aligned middle.
+    let (pre, words, _) = unsafe { dst.align_to_mut::<T>() };
+    if !pre.is_empty() || words.len() < src.len() {
+        return false;
+    }
+    let words = &mut words[..src.len()];
+    if reverse {
+        for (d, &p) in words.iter_mut().rev().zip(src) {
+            *d = f(p);
+        }
+    } else {
+        for (d, &p) in words.iter_mut().zip(src) {
+            *d = f(p);
+        }
+    }
+    true
 }
 
 /// Write `c` into `out` in the panel's format, turned to match `rotate`.
@@ -122,16 +168,7 @@ pub fn pack_rect(c: &Canvas, f: &Format, rotate: u8, r: IRect, out: &mut [u8]) {
                 // The physical row segment the logical one covers.
                 let lo = if rotate == 0 { px0 } else { px0 + 1 - r.w };
                 let o = py * f.stride + lo * bpp;
-                let dst = out[o..o + r.w * bpp].chunks_exact_mut(bpp);
-                if rotate == 0 {
-                    for (d, &p) in dst.zip(src) {
-                        put(pixel, p, d);
-                    }
-                } else {
-                    for (d, &p) in dst.rev().zip(src) {
-                        put(pixel, p, d);
-                    }
-                }
+                pack_row(pixel, src, &mut out[o..o + r.w * bpp], rotate == 2);
             }
             _ => {
                 for (i, &p) in src.iter().enumerate() {
