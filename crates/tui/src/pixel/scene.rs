@@ -6,13 +6,13 @@
 //! Pi Zero the shadows alone would otherwise cost more than the whole
 //! frame budget.
 
-use macdash_proto::{Presence, MAX_PROC_NAME, TOP_PROC_COUNT};
+use macdash_proto::{Presence, MAX_PROC_NAME, STATS_INTERVAL_MS, TOP_PROC_COUNT};
 
 use super::canvas::{hex, Canvas, RectF, Rgb};
 use super::layout::{core_slots, layout, proc_rows, Layout, RADIUS, ROW_H};
 use super::text::{Face, Typefaces};
 use super::values::*;
-use crate::state::{Dashboard, SAMPLES_PER_COLUMN};
+use crate::state::{Dashboard, HISTORY, SAMPLES_PER_COLUMN};
 use crate::ui::format;
 
 const BLACK: Rgb = hex(0x000000);
@@ -23,8 +23,10 @@ pub struct Scene {
     t: Typefaces,
     frame: Canvas,
     base: Canvas,
-    /// (dimmed, waiting) the static layer was drawn for.
-    key: Option<(bool, bool)>,
+    /// `waiting` state the static layer was drawn for. Dimming is not part
+    /// of the key: it is a per-frame overlay, so a Live/Stale change must not
+    /// rebuild the shadows and glow (0.5-1 s on a Pi Zero).
+    key: Option<bool>,
     builds: usize,
 }
 
@@ -58,9 +60,9 @@ impl Scene {
         let presence = dash.presence(now_ms);
         let waiting = dash.latest.is_none();
         let dimmed = matches!(presence, Presence::Stale | Presence::Asleep | Presence::DisplayOff);
-        if self.key != Some((dimmed, waiting)) {
+        if self.key != Some(waiting) {
             self.build_static(waiting);
-            self.key = Some((dimmed, waiting));
+            self.key = Some(waiting);
             self.builds += 1;
         }
         self.frame.copy_from(&self.base);
@@ -116,7 +118,7 @@ impl Scene {
             let y = (chart.y + chart.h * k as f32 / 4.0) as i32;
             c.dashed_hline(chart.x as i32, (chart.x + chart.w) as i32, y, SEPARATOR, 150);
         }
-        t.draw_right(c, Face::Regular, 10.0, chart.x + chart.w, chart.y + chart.h + 14.0, "4 min", TERTIARY, 255);
+        t.draw_right(c, Face::Regular, 10.0, chart.x + chart.w, chart.y + chart.h + 14.0, &history_caption(), TERTIARY, 255);
         let p = self.l.procs;
         t.draw_right(c, Face::SemiBold, 11.0, p.x + 640.0f32.min(p.w - 200.0), p.y + 30.0, "CPU", TERTIARY, 255);
         t.draw_right(c, Face::SemiBold, 11.0, p.x + p.w - 32.0, p.y + 30.0, "MEMORY", TERTIARY, 255);
@@ -202,13 +204,18 @@ impl Scene {
         }
 
         let chart = cpu_chart(r);
-        let cols = (chart.w / 6.0).max(2.0) as usize;
+        // One column per SAMPLES_PER_COLUMN packets, over the whole history:
+        // the width is interpolated, so the draw cost does not depend on it.
+        let cols = HISTORY / SAMPLES_PER_COLUMN;
         let hist: Vec<f32> = dash
             .cpu_history
             .averaged(cols, SAMPLES_PER_COLUMN)
             .iter()
             .map(|&v| v as f32 / 100.0)
             .collect();
+        // While history is short, hug the right edge so the graph scrolls
+        // left instead of restretching every point each second.
+        let chart = right_aligned(chart, hist.len(), cols);
         c.area(chart, &hist, ACCENT, 115);
         if let (Some(sys), Some(tot)) = (p.cpu.sys, p.cpu.total) {
             if tot > 0.0 {
@@ -354,6 +361,20 @@ impl Scene {
 }
 
 /// The CPU card's history chart.
+/// The part of `chart` that `len` of `cols` columns occupy, anchored at the
+/// right edge (newest data), because `Canvas::area` spreads whatever it is
+/// given across the full width.
+fn right_aligned(chart: RectF, len: usize, cols: usize) -> RectF {
+    let w = chart.w * len.min(cols) as f32 / cols.max(1) as f32;
+    RectF::new(chart.x + chart.w - w, chart.y, w, chart.h)
+}
+
+/// Time span of the CPU chart, derived from the history length and the
+/// packet rate so the caption cannot drift from the data again.
+fn history_caption() -> String {
+    format!("{} min", HISTORY as u64 * STATS_INTERVAL_MS / 60_000)
+}
+
 fn cpu_chart(cpu: RectF) -> RectF {
     RectF::new(cpu.x + 20.0, cpu.y + 162.0, cpu.w - 40.0, (cpu.h - 182.0).max(0.0))
 }
@@ -491,6 +512,33 @@ mod tests {
         let builds = s.static_builds();
         s.render(&d, 12_200);
         s.render(&d, 12_400);
+        assert_eq!(s.static_builds(), builds);
+    }
+
+    #[test]
+    fn short_history_hugs_the_right_edge() {
+        let c = RectF::new(10.0, 20.0, 200.0, 50.0);
+        assert_eq!(right_aligned(c, 240, 240), c);
+        assert_eq!(right_aligned(c, 500, 240), c);
+        assert_eq!(right_aligned(c, 120, 240), RectF::new(110.0, 20.0, 100.0, 50.0));
+        assert!(right_aligned(c, 0, 240).is_empty());
+        let one = right_aligned(c, 1, 240);
+        assert_eq!((one.y, one.h), (20.0, 50.0));
+        assert!((one.x + one.w - 210.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_caption_matches_the_history_length() {
+        assert_eq!(history_caption(), "4 min");
+    }
+
+    #[test]
+    fn going_stale_does_not_rebuild_the_static_layer() {
+        let mut s = Scene::new(1024, 600);
+        let d = dash(packet(10, 10));
+        s.render(&d, 12_000);
+        let builds = s.static_builds();
+        s.render(&d, 120_000);
         assert_eq!(s.static_builds(), builds);
     }
 }

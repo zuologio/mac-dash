@@ -63,7 +63,7 @@ while [[ $# -gt 0 ]]; do
         --mac)       MAC_ADDR="$2"; shift 2 ;;
         --theme)     THEME="$2"; shift 2 ;;
         --text)      TEXT=1; shift ;;
-        --zero2)    TARGET="armv7-unknown-linux-musleabihf"; shift ;;
+        --zero2)     TARGET="armv7-unknown-linux-musleabihf"; shift ;;
         *) echo "unknown option: $1"; exit 1 ;;
     esac
 done
