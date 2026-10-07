@@ -10,6 +10,7 @@ mod beacon;
 mod brightness;
 mod console_font;
 mod hdmi;
+mod pixel;
 mod receiver;
 mod repaint;
 mod state;
