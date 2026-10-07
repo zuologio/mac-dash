@@ -605,12 +605,24 @@ fn temp_model(r: RectF, t: &mut Typefaces, dash: &Dashboard, p: &StatsPacket) ->
     let mut chart = Chart::default();
     if !trend_area(r, 112.0).is_empty() {
         let hist = dash.temp_history.averaged(trend_cols(r, 112.0), SAMPLES_PER_COLUMN);
-        if let (Some(&lo), Some(&hi)) = (hist.iter().min(), hist.iter().max()) {
+        let done = completed(&hist);
+        if let (Some(&lo), Some(&hi)) = (done.iter().min(), done.iter().max()) {
             let (lo, hi) = (lo as f32 - 2.0, hi as f32 + 2.0);
             chart.series.push(hist.iter().map(|&v| quant((v as f32 - lo) / (hi - lo))).collect());
         }
     }
     Model::Temp { value, battery, chart }
+}
+
+/// The columns a chart's scale comes from: all but the newest, which is
+/// still filling at packet rate and would rescale every point with it (the
+/// newest point is clamped into the range instead, by `quant`). A chart
+/// with only that one column scales to it, so it still shows something.
+fn completed(cols: &[u64]) -> &[u64] {
+    match cols.len() {
+        0 | 1 => cols,
+        n => &cols[..n - 1],
+    }
 }
 
 fn net_model(r: RectF, dash: &Dashboard, p: &StatsPacket) -> Model {
@@ -620,7 +632,7 @@ fn net_model(r: RectF, dash: &Dashboard, p: &StatsPacket) -> Model {
         let cols = trend_cols(r, 106.0);
         let rx = dash.rx_history.averaged(cols, SAMPLES_PER_COLUMN);
         let tx = dash.tx_history.averaged(cols, SAMPLES_PER_COLUMN);
-        let max = rx.iter().chain(&tx).copied().max().unwrap_or(0).max(1024) as f32;
+        let max = completed(&rx).iter().chain(completed(&tx)).copied().max().unwrap_or(0).max(1024) as f32;
         let scale = |v: &Vec<u64>| v.iter().map(|&b| quant(b as f32 / max)).collect::<Vec<u16>>();
         chart.series = vec![scale(&rx), scale(&tx)];
     }
@@ -1190,6 +1202,37 @@ mod tests {
         let dirty = s.render(&d, 120_000).dirty;
         for part in PARTS {
             assert!(dirty.contains(&s.region(part)), "{part:?} not redrawn");
+        }
+    }
+
+    /// A spike in the newest, still-filling column must not rescale the
+    /// small charts: everything left of their newest segment stays put.
+    #[test]
+    fn a_live_column_alone_leaves_older_chart_points_unchanged() {
+        let mut s = Scene::new(1024, 600);
+        let mut d = dash(packet(10, 10));
+        // The 61st packet opens a column; the 62nd lands inside it.
+        d.ingest(packet(10, 10), 11_900);
+        let before = snap(s.render(&d, 12_000));
+        let mut p = packet(10, 10);
+        p.net = Some(Net { iface: "en0".into(), rx_bps: Some(900_000_000), tx_bps: Some(800_000_000), rx_total: 0, tx_total: 0 });
+        p.temp = Some(Temp { soc: Some(99.0), gpu: None, battery: Some(29.0) });
+        d.ingest(p, 12_000);
+        let after = snap(s.render(&d, 12_100));
+        let l = layout(1024, 600);
+        for (part, card, top) in [(Part::Net, l.net, 106.0), (Part::Temp, l.temp, 112.0)] {
+            let trend = trend_area(card, top);
+            let tail = *s.cells(part).last().unwrap();
+            let mut changed = 0;
+            for y in (trend.y as usize - 3)..(trend.y + trend.h) as usize + 3 {
+                for x in trend.x as usize..tail.x {
+                    if before.get(x, y) != after.get(x, y) {
+                        changed += 1;
+                    }
+                }
+            }
+            assert_eq!(changed, 0, "{part:?}: older points moved");
+            assert!((tail.x..tail.x + tail.w).any(|x| (tail.y..tail.y + tail.h).any(|y| before.get(x, y) != after.get(x, y))), "{part:?}: newest point did not move");
         }
     }
 }

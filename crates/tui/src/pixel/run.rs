@@ -27,6 +27,17 @@ const FRAME_MS: u64 = 100;
 /// The loop wakes on a grid of this step to poll packets, keys and signals.
 const POLL_MS: u64 = 50;
 
+/// How often a whole frame is sent even when nothing asked for one: the
+/// panel is shared with the kernel (and anything else that opens
+/// /dev/fb0), and dirty rectangles alone would never repair what it drew.
+const FULL_REPAINT_MS: u64 = 30_000;
+
+/// Whether the next frame should be a whole one: the first, and then one
+/// every FULL_REPAINT_MS.
+pub fn full_repaint_due(last_full_ms: Option<u64>, now_ms: u64) -> bool {
+    last_full_ms.is_none_or(|last| now_ms.checked_sub(last).is_some_and(|d| d >= FULL_REPAINT_MS))
+}
+
 /// Whether to draw a frame now. `busy` is true while values glide or a
 /// packet is waiting to be shown. Polls fall on a 50 ms grid but wake a
 /// little late, so a busy frame is due half a poll early: otherwise one
@@ -137,6 +148,7 @@ pub fn run(
     let mut unseen = false;
     let mut write_failed = false;
     let origin = now();
+    let mut last_full: Option<u64> = None;
 
     while !stop_requested() && !quit_pressed() {
         if let Some((pkt, arrived)) = rx.take() {
@@ -148,15 +160,25 @@ pub fn run(
         if dash.presence.poll_transition(t).is_some() {
             backlight.set(wants);
             last_frame = None;
+            scene.invalidate();
         }
         if let Some(power) = hdmi.as_mut() {
             if power.set(wants, t) {
+                // A panel that just woke shows nothing we drew.
                 last_frame = None;
+                scene.invalidate();
             }
+        }
+        if full_repaint_due(last_full, t) {
+            scene.invalidate();
+            last_frame = None;
         }
         let off = hdmi.as_ref().is_some_and(|p| p.is_off());
         if !off && should_redraw(last_frame, t, unseen || dash.easing(t)) {
             let frame = scene.render(&dash, t);
+            if frame.dirty.iter().any(|r| r.w * r.h == frame.canvas.w * frame.canvas.h) {
+                last_full = Some(t);
+            }
             let written = session.fb.present_rects(frame.canvas, &frame.dirty);
             match written {
                 Ok(()) => write_failed = false,
@@ -196,6 +218,15 @@ mod tests {
             display_asleep: None,
             procs: vec![],
         }
+    }
+
+    #[test]
+    fn a_full_repaint_is_due_first_and_every_30_seconds() {
+        assert!(full_repaint_due(None, 0));
+        assert!(!full_repaint_due(Some(1_000), 1_000));
+        assert!(!full_repaint_due(Some(1_000), 1_000 + FULL_REPAINT_MS - 1));
+        assert!(full_repaint_due(Some(1_000), 1_000 + FULL_REPAINT_MS));
+        assert!(!full_repaint_due(Some(5_000), 1_000), "a clock that went backwards");
     }
 
     #[test]
