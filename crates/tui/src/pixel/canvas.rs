@@ -58,10 +58,13 @@ impl Canvas {
         Self { w, h, px: vec![fill; w * h] }
     }
 
+    #[cfg(test)]
     pub fn get(&self, x: usize, y: usize) -> Rgb {
         self.px[y * self.w + x]
     }
 
+    // Nothing repaints a whole canvas yet; the scene copies its static layer.
+    #[allow(dead_code)]
     pub fn fill(&mut self, c: Rgb) {
         self.px.fill(c);
     }

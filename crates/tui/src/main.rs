@@ -60,6 +60,8 @@ struct Args {
     macs: Vec<SocketAddr>,
     /// Index into `ui::theme::THEMES`.
     theme: usize,
+    /// Use the text renderer even on the Linux console.
+    text: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -72,6 +74,7 @@ fn parse_args() -> Result<Args, String> {
         font: None,
         macs: Vec::new(),
         theme: 0,
+        text: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -84,6 +87,7 @@ fn parse_args() -> Result<Args, String> {
             "--backlight" => args.backlight = Some(it.next().ok_or("--backlight needs a path")?),
             "--hdmi" => args.hdmi = true,
             "--no-beacon" => args.no_beacon = true,
+            "--text" => args.text = true,
             "--font" => args.font = Some(it.next().ok_or("--font needs a path")?),
             "--theme" => {
                 let v = it.next().ok_or("--theme needs a name")?;
@@ -145,6 +149,7 @@ OPTIONS:
     --theme <name>      Colour scheme: {} (default classic)
     --no-beacon         Do not announce; only useful when the agent was
                         started with a matching --target
+    --text              Draw with the text console even where pixels work
     -h, --help          Show this help
 
 KEYS:
@@ -158,6 +163,24 @@ KEYS:
 fn now_ms() -> u64 {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// The framebuffer to draw pixels on, or None for the text renderer: when
+/// --text was given, when this is not the Linux console (SSH, a Mac
+/// terminal), or when the framebuffer cannot be used. A failure is logged
+/// and the text dashboard runs instead, so the panel is never left blank.
+fn pixel_framebuffer(text: bool) -> Option<pixel::framebuffer::Framebuffer> {
+    if text || std::env::var("TERM").as_deref() != Ok("linux") {
+        return None;
+    }
+    use pixel::framebuffer::{Framebuffer, FB_PATH, ROTATE_PATH};
+    match Framebuffer::open(FB_PATH, ROTATE_PATH) {
+        Ok(fb) => Some(fb),
+        Err(e) => {
+            eprintln!("macdash: pixels unavailable ({e}); using the text console");
+            None
+        }
+    }
 }
 
 fn main() {
@@ -214,7 +237,17 @@ fn main() {
         None
     };
 
-    let result = run(rx, &mut backlight, &mut hdmi, args.font.as_deref());
+    let result = match pixel_framebuffer(args.text) {
+        Some(fb) => {
+            eprintln!("macdash: drawing to {}", pixel::framebuffer::FB_PATH);
+            // Rewrapped without the errno: a console that refuses graphics
+            // mode fails with ENOTTY, which must not get the text
+            // renderer's "stdout is not a terminal" advice below.
+            pixel::run::run(fb, rx, &mut backlight, &mut hdmi, now_ms)
+                .map_err(|e| io::Error::other(format!("pixel dashboard: {e}")))
+        }
+        None => run(rx, &mut backlight, &mut hdmi, args.font.as_deref()),
+    };
     // Restore even when terminal setup or cleanup fails. systemd also does
     // this on termination, where Rust destructors may not run.
     backlight.set(true);
