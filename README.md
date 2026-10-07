@@ -4,8 +4,11 @@
 
 **Your Mac's vitals, live on a second screen.**
 
-A tiny metrics agent for macOS and a terminal dashboard for a Raspberry Pi,
-talking over your LAN. Plug a small display into the Pi and leave it running.
+A tiny metrics agent for macOS and a dashboard for a Raspberry Pi, talking
+over your LAN. Plug a small display into the Pi and leave it running.
+
+On the Pi, the dashboard is a macOS-style picture drawn in pixels. Over SSH, on
+the Mac, or with `--text`, you get the text dashboard shown below.
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-b7410e.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/mac-Apple%20Silicon-black.svg)](#)
@@ -102,6 +105,7 @@ them again on later installs to keep them.
 | `--font <name>` | Console font. The default `Lat15-Terminus16` fits a 1024×600 panel; use `Lat15-Terminus32x16` for larger text on a 1080p screen |
 | `--ttf <file>` `--ttf-size <px>` `--ttf-cell <WxH>` | Turn your own `.ttf`/`.otf` into the console font (needs `freetype-py`). `--ttf-cell 8x16` keeps the full 128x37 layout |
 | `--mac <ip>` | Also announce directly to this Mac. Use it if the screen stays on `WAITING` (some Wi-Fi routers block multicast). The installer fills this in automatically |
+| `--text` | Use the text console instead of the pixel dashboard |
 | `--zero2` | Install the Pi Zero 2 W build |
 
 A typical setup for a 7-inch HDMI panel:
@@ -113,6 +117,8 @@ A typical setup for a 7-inch HDMI panel:
 Orientation and font choices are kept on later installs unless you pass a new one.
 
 ## Themes
+
+Themes apply to the text dashboard. The Pi's pixel dashboard has one macOS-style look.
 
 | Theme | Normal | Warning | Critical |
 |---|---|---|---|
@@ -165,6 +171,12 @@ as `--hdmi`, since they are not kept between installs):
 ```
 
 ## Using it
+
+**Pixel or text:** the pixel dashboard runs when the terminal is the Pi's own
+console (`TERM=linux`, as in the service) and `/dev/fb0` works. If the
+framebuffer cannot be used, it falls back to text by itself. SSH sessions and
+Mac terminals always get the text dashboard. The pixel dashboard redraws twice
+a second while the Mac streams, and once a second when idle.
 
 **Keys:** `t` cycles themes · `q`, `Esc` or `Ctrl-C` quits.
 
@@ -246,6 +258,7 @@ as JSON.
 | Flag | |
 |---|---|
 | `--theme <name>` | `classic`, `traffic`, `quiet`, `thermal`, `phosphor`, `sapphire`, `grey`, `graphite` |
+| `--text` | Force the text dashboard, even on the Pi's console |
 | `--hdmi` | HDMI off while the Mac's display sleeps (VC4/KMS, `fb0`) |
 | `--backlight <path>` | Backlight to darken while the Mac sleeps |
 | `--font <path>` | Console font to load before drawing |
@@ -269,6 +282,10 @@ The code is three crates: `proto` (wire format, shared by both sides), `agent`
 (macOS) and `tui` (the display). [ANALYSIS.md](ANALYSIS.md) covers the design:
 why UDP and beacons, how the CPU cost went from 22% to 0.012%, sleep detection
 and the edge cases.
+
+## Credits
+
+The pixel dashboard uses [Inter](https://rsms.me/inter/) by Rasmus Andersson, under the SIL Open Font License (`crates/tui/assets/fonts/LICENSE-Inter.txt`). The fonts are embedded in the binary.
 
 ## License
 
