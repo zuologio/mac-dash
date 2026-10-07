@@ -52,7 +52,7 @@ fn main() {
 
     let mut scene = pixel::scene::Scene::new(w, h);
     let t = Instant::now();
-    let frame = scene.render(&dash, now_ms());
+    let frame = scene.render(&dash, now_ms()).canvas;
     eprintln!("rendered {w}x{h} in {:?}", t.elapsed());
     let raw: Vec<u8> = frame.px.iter().flat_map(|p| [p.0, p.1, p.2]).collect();
     std::fs::write(&out, raw).expect("write");

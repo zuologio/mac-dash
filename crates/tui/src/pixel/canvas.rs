@@ -4,11 +4,12 @@
 //! pixel centre to the shape's edge becomes an alpha. Blending is integer
 //! maths on u8 channels, because the Pi Zero's ARMv6 core is slow at
 //! floating point: a float canvas cost 460 ms a frame there, this ~100 ms.
-//! Every drawing primitive clips to the canvas, so none of them can panic
-//! on a bad rectangle. `Canvas::get` is the exception: it is for in-bounds
+//! Every drawing primitive clips to the canvas, and to the clip rectangle
+//! when one is set, so none of them can panic on a bad rectangle and a
+//! region of the scene can be redrawn without touching its neighbours. `Canvas::get` is the exception: it is for in-bounds
 //! reads (tests) and panics outside the canvas.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Rgb(pub u8, pub u8, pub u8);
 
 pub const fn hex(v: u32) -> Rgb {
@@ -69,15 +70,36 @@ fn sd_rrect(px: f32, py: f32, r: RectF, radius: f32) -> f32 {
     (ox * ox + oy * oy).sqrt() + qx.max(qy).min(0.0) - radius
 }
 
+/// Where point `i` of `n` sits in a chart drawn by `Canvas::chart`.
+#[cfg(test)]
+pub fn chart_x(r: RectF, n: usize, pitch: f32, i: usize) -> f32 {
+    r.x + r.w - (n - 1 - i) as f32 * pitch
+}
+
 pub struct Canvas {
     pub w: usize,
     pub h: usize,
     pub px: Vec<Rgb>,
+    /// Drawable pixels: x0, y0, x1, y1 (exclusive). The whole canvas, or
+    /// the part of it inside `set_clip`'s rectangle.
+    clip: [i32; 4],
 }
 
 impl Canvas {
     pub fn new(w: usize, h: usize, fill: Rgb) -> Self {
-        Self { w, h, px: vec![fill; w * h] }
+        let mut c = Self { w, h, px: vec![fill; w * h], clip: [0; 4] };
+        c.set_clip(None);
+        c
+    }
+
+    /// Limit drawing to `r` (and the canvas); `None` draws anywhere again.
+    pub fn set_clip(&mut self, r: Option<IRect>) {
+        let (w, h) = (self.w.min(i32::MAX as usize), self.h.min(i32::MAX as usize));
+        let whole = IRect::new(0, 0, w, h);
+        self.clip = match r.unwrap_or(whole).clip(w, h) {
+            Some(r) => [r.x as i32, r.y as i32, (r.x + r.w) as i32, (r.y + r.h) as i32],
+            None => [0; 4],
+        };
     }
 
     #[cfg(test)]
@@ -97,9 +119,23 @@ impl Canvas {
         }
     }
 
+    /// Copy one rectangle of `other`, which must be the same size, back
+    /// over this canvas: restoring a region's background before redrawing it.
+    pub fn copy_rect_from(&mut self, other: &Canvas, r: IRect) {
+        if (other.w, other.h) != (self.w, self.h) || other.px.len() != self.px.len() {
+            return;
+        }
+        let Some(r) = r.clip(self.w, self.h) else { return };
+        for y in r.y..r.y + r.h {
+            let a = y * self.w + r.x;
+            self.px[a..a + r.w].copy_from_slice(&other.px[a..a + r.w]);
+        }
+    }
+
     /// Mix `c` over the pixel at (x, y) with alpha `a` (255 = opaque).
     pub fn blend(&mut self, x: i32, y: i32, c: Rgb, a: u8) {
-        if a == 0 || x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
+        let [x0, y0, x1, y1] = self.clip;
+        if a == 0 || x < x0 || y < y0 || x >= x1 || y >= y1 {
             return;
         }
         let p = &mut self.px[y as usize * self.w + x as usize];
@@ -112,16 +148,20 @@ impl Canvas {
         *p = Rgb(mix(p.0, c.0), mix(p.1, c.1), mix(p.2, c.2));
     }
 
-    /// Pixel rows and columns a rectangle touches, clipped to the canvas.
+    /// Pixel rows and columns a rectangle touches, clipped to the canvas
+    /// and the clip rectangle.
     fn span(&self, x0: f32, y0: f32, x1: f32, y1: f32) -> (i32, i32, i32, i32) {
+        let [cx0, cy0, cx1, cy1] = self.clip;
         (
-            (x0.floor() as i32).max(0),
-            (y0.floor() as i32).max(0),
-            (x1.ceil() as i32).min(self.w as i32),
-            (y1.ceil() as i32).min(self.h as i32),
+            (x0.floor() as i32).max(cx0),
+            (y0.floor() as i32).max(cy0),
+            (x1.ceil() as i32).min(cx1),
+            (y1.ceil() as i32).min(cy1),
         )
     }
 
+    /// The whole canvas, top to bottom; for the static layer, so it ignores
+    /// the clip rectangle.
     pub fn vgradient(&mut self, top: Rgb, bottom: Rgb) {
         let last = (self.h.max(2) - 1) as i32;
         for y in 0..self.h {
@@ -255,53 +295,61 @@ impl Canvas {
         }
     }
 
-    /// A smooth area chart: `data` (0..=1, oldest first) as a 2 px line over
-    /// a fill that fades towards the baseline.
-    pub fn area(&mut self, r: RectF, data: &[f32], c: Rgb, fill_a: u8) {
-        if r.is_empty() || data.is_empty() {
-            return;
-        }
+    /// An area chart: `data` (0..=1, oldest first) as a 2 px line over a
+    /// fill that fades towards the baseline. Point i sits at a fixed x,
+    /// `pitch` apart, the newest on the right edge of `r`, so a short
+    /// history grows leftwards instead of stretching, and each segment
+    /// depends only on its two end points: changing the newest value only
+    /// repaints the last segment. Points are joined by a smoothstep curve.
+    pub fn chart(&mut self, r: RectF, data: &[f32], pitch: f32, c: Rgb, fill_a: u8) {
         let n = data.len();
-        let at = |t: f32| {
+        if r.is_empty() || n == 0 || !(pitch > 0.0) {
+            return;
+        }
+        if !(r.x.is_finite() && r.y.is_finite() && r.h.is_finite() && r.w.is_finite() && pitch.is_finite()) {
+            return;
+        }
+        let v = |i: usize| data[i].clamp(0.0, 1.0);
+        let right = r.x as f64 + r.w as f64;
+        // A lone point is drawn as one flat segment a pitch wide.
+        let span_n = n.max(2);
+        let left = (right - (span_n - 1) as f64 * pitch as f64).max(r.x as f64);
+        let first = right - (span_n - 1) as f64 * pitch as f64;
+        // The value at x: the segment it falls in, eased between its ends.
+        let at = |x: f64| -> f32 {
             if n == 1 {
-                return data[0].clamp(0.0, 1.0);
+                return v(0);
             }
-            let f = t.clamp(0.0, 1.0) * (n - 1) as f32;
-            let i = (f.floor() as usize).min(n - 1);
-            let j = (i + 1).min(n - 1);
-            let u = f - i as f32;
+            let f = ((x - first) / pitch as f64).max(0.0);
+            let i = (f.floor() as usize).min(n - 2);
+            let u = (f - i as f64).clamp(0.0, 1.0) as f32;
             let u = u * u * (3.0 - 2.0 * u);
-            (data[i] * (1.0 - u) + data[j] * u).clamp(0.0, 1.0)
+            v(i) * (1.0 - u) + v(i + 1) * u
         };
-        if !(r.x.is_finite() && r.y.is_finite() && r.h.is_finite()) {
-            return;
-        }
+        let [cx0, cy0, cx1, cy1] = self.clip;
         let base = r.y + r.h;
-        // Only columns that land on the canvas: a huge or infinite width
-        // must not loop over the part that is off it.
-        let x0 = r.x.floor() as f64;
-        let cols = r.w.round() as f64;
-        let k_lo = (-x0).max(0.0);
-        let k_hi = cols.min(self.w as f64 - x0);
-        if k_hi.is_nan() || k_lo.is_nan() || k_hi <= k_lo {
+        // Only columns that land on the drawable area: a huge or infinite
+        // width must not loop over the part that is off it.
+        let k_lo = left.floor().max(cx0 as f64);
+        let k_hi = right.round().min(cx1 as f64);
+        if !(k_hi > k_lo) {
             return;
         }
-        for k in k_lo as i32..k_hi as i32 {
-            let x = (x0 + k as f64) as i32;
-            let t = (k as f32 + 0.5) / r.w;
-            let top = base - at(t) * r.h;
+        for x in k_lo as i32..k_hi as i32 {
+            let xf = x as f64;
+            let top = base - at(xf + 0.5) * r.h;
             let span = (base - top).max(1.0);
-            for y in (top.floor() as i32).max(0)..(base as i32).min(self.h as i32) {
+            for y in (top.floor() as i32).max(cy0)..(base as i32).min(cy1) {
                 let g = 1.0 - (y as f32 - top) / span;
                 let cover = if (y as f32) < top { 1.0 - (top - y as f32) } else { 1.0 };
                 self.blend(x, y, c, alpha(fill_a, (0.15 + 0.85 * g) * cover));
             }
-            let t0 = base - at((k as f32) / r.w) * r.h;
-            let t1 = base - at((k as f32 + 1.0) / r.w) * r.h;
+            let t0 = base - at(xf) * r.h;
+            let t1 = base - at(xf + 1.0) * r.h;
             let (lo, hi) = (t0.min(t1) - 1.0, t0.max(t1) + 1.0);
             let (y_lo, y_hi) = (
-                (lo.floor() as i32).max(0),
-                (hi.ceil() as i32).saturating_add(1).min(self.h as i32),
+                (lo.floor() as i32).max(cy0),
+                (hi.ceil() as i32).saturating_add(1).min(cy1),
             );
             for y in y_lo..y_hi {
                 let yc = y as f32 + 0.5;
@@ -312,11 +360,12 @@ impl Canvas {
 
     /// A dashed horizontal line: 2 px on, 2 px off.
     pub fn dashed_hline(&mut self, x0: i32, x1: i32, y: i32, c: Rgb, a: u8) {
-        if y < 0 || y as usize >= self.h {
+        let [cx0, cy0, cx1, cy1] = self.clip;
+        if y < cy0 || y >= cy1 {
             return;
         }
         // The phase stays tied to absolute x, so clipping does not shift it.
-        for x in x0.max(0)..x1.min(self.w as i32) {
+        for x in x0.max(cx0)..x1.min(cx1) {
             if x.rem_euclid(4) < 2 {
                 self.blend(x, y, c, a);
             }
@@ -376,7 +425,7 @@ mod tests {
         c.rrect(RectF::new(5.0, 5.0, 0.0, 3.0), 2.0, WHITE, 255);
         c.rrect(RectF::new(-50.0, -50.0, 10.0, 10.0), 2.0, WHITE, 255);
         c.shadow(RectF::new(100.0, 100.0, 10.0, 10.0), 4.0, 6.0, 2.0, 255);
-        c.area(RectF::new(0.0, 0.0, 10.0, 10.0), &[], WHITE, 255);
+        c.chart(RectF::new(0.0, 0.0, 10.0, 10.0), &[], 1.0, WHITE, 255);
         c.ring(5.0, 5.0, 0.0, 0.0, 0.5, WHITE, WHITE);
         assert!(c.px.iter().all(|&p| p == BLACK));
     }
@@ -385,14 +434,16 @@ mod tests {
     fn huge_rects_and_lines_return_promptly_and_clip() {
         let mut c = Canvas::new(10, 10, BLACK);
         let data = [0.2, 0.9, 0.5];
-        c.area(RectF::new(1e9, 1e9, 1e9, 1e9), &data, WHITE, 255);
-        c.area(RectF::new(-1e9, 0.0, f32::INFINITY, 1e9), &data, WHITE, 255);
-        c.area(RectF::new(f32::NAN, 0.0, 5.0, 5.0), &data, WHITE, 255);
+        c.chart(RectF::new(1e9, 1e9, 1e9, 1e9), &data, 1e8, WHITE, 255);
+        c.chart(RectF::new(-1e9, 0.0, f32::INFINITY, 1e9), &data, 1.0, WHITE, 255);
+        c.chart(RectF::new(f32::NAN, 0.0, 5.0, 5.0), &data, 1.0, WHITE, 255);
+        c.chart(RectF::new(0.0, 0.0, 5.0, 5.0), &data, f32::NAN, WHITE, 255);
+        c.chart(RectF::new(-1e9, 0.0, 1e9 - 20.0, 5.0), &data, 0.0, WHITE, 255);
         c.dashed_hline(i32::MIN, i32::MAX, -1, WHITE, 255);
         c.dashed_hline(0, 10, 99, WHITE, 255);
         c.dashed_hline(i32::MIN, i32::MAX, 10, WHITE, 255);
         let mut d = Canvas::new(10, 10, BLACK);
-        d.area(RectF::new(1e9, 1e9, 1e9, 1e9), &data, WHITE, 255);
+        d.chart(RectF::new(1e9, 1e9, 1e9, 1e9), &data, 1.0, WHITE, 255);
         d.dashed_hline(i32::MIN, i32::MAX, 5, WHITE, 255);
         assert!(c.px.iter().all(|&p| p == BLACK));
         assert_eq!(d.get(0, 5), WHITE);
@@ -408,9 +459,9 @@ mod tests {
     }
 
     #[test]
-    fn area_fills_below_the_line_only() {
+    fn chart_fills_below_the_line_only() {
         let mut c = Canvas::new(20, 20, BLACK);
-        c.area(RectF::new(0.0, 0.0, 20.0, 20.0), &[0.5, 0.5], WHITE, 255);
+        c.chart(RectF::new(0.0, 0.0, 20.0, 20.0), &[0.5, 0.5], 20.0, WHITE, 255);
         assert_eq!(c.get(10, 2), BLACK, "above the line");
         assert_ne!(c.get(10, 15), BLACK, "below the line");
         assert_eq!(c.get(10, 10), WHITE, "the line itself");
@@ -434,6 +485,78 @@ mod tests {
         assert_eq!(c.get(1, 10), BLACK);
         let Rgb(mid, _, _) = c.get(0, 5);
         assert!((120..=135).contains(&mid), "{mid}");
+    }
+
+    #[test]
+    fn a_clip_rect_bounds_every_primitive() {
+        let mut c = Canvas::new(40, 40, BLACK);
+        c.set_clip(Some(IRect::new(10, 10, 5, 5)));
+        c.rrect(RectF::new(0.0, 0.0, 40.0, 40.0), 0.0, WHITE, 255);
+        c.ring(20.0, 20.0, 15.0, 6.0, 1.0, WHITE, WHITE);
+        c.dashed_hline(0, 40, 2, WHITE, 255);
+        c.chart(RectF::new(0.0, 0.0, 40.0, 40.0), &[1.0, 1.0], 39.0, WHITE, 255);
+        c.blend(0, 0, WHITE, 255);
+        for y in 0..40 {
+            for x in 0..40 {
+                let inside = (10..15).contains(&x) && (10..15).contains(&y);
+                assert_eq!(c.get(x, y) == WHITE, inside, "({x}, {y})");
+            }
+        }
+        c.set_clip(None);
+        c.blend(0, 0, WHITE, 255);
+        assert_eq!(c.get(0, 0), WHITE, "clearing the clip restores the canvas");
+        // A clip off the canvas clips everything, without panicking.
+        c.set_clip(Some(IRect::new(100, 100, 5, 5)));
+        c.blend(39, 39, hex(0x123456), 255);
+        assert_ne!(c.get(39, 39), hex(0x123456));
+    }
+
+    #[test]
+    fn copy_rect_from_copies_only_that_rect() {
+        let base = Canvas::new(6, 4, WHITE);
+        let mut c = Canvas::new(6, 4, BLACK);
+        c.copy_rect_from(&base, IRect::new(1, 1, 2, 2));
+        c.copy_rect_from(&base, IRect::new(5, 3, 9, 9));
+        let lit: Vec<(usize, usize)> =
+            (0..4).flat_map(|y| (0..6).map(move |x| (x, y))).filter(|&(x, y)| c.get(x, y) == WHITE).collect();
+        assert_eq!(lit, vec![(1, 1), (2, 1), (1, 2), (2, 2), (5, 3)]);
+        c.copy_rect_from(&Canvas::new(3, 3, WHITE), IRect::new(0, 0, 6, 4));
+        assert_eq!(c.get(0, 0), BLACK, "a different size is ignored");
+    }
+
+    #[test]
+    fn chart_points_sit_at_fixed_x_from_the_right_edge() {
+        let r = RectF::new(10.0, 0.0, 100.0, 20.0);
+        assert_eq!(chart_x(r, 5, 2.5, 4), 110.0, "newest at the right edge");
+        assert_eq!(chart_x(r, 5, 2.5, 3), 107.5);
+        assert_eq!(chart_x(r, 5, 2.5, 0), 100.0);
+        // One more point moves every point one pitch left, nothing else.
+        assert_eq!(chart_x(r, 6, 2.5, 0), 97.5);
+    }
+
+    #[test]
+    fn a_short_chart_grows_from_the_right_without_stretching() {
+        let mut c = Canvas::new(100, 20, BLACK);
+        c.chart(RectF::new(0.0, 0.0, 100.0, 20.0), &[0.5, 0.5, 0.5], 10.0, WHITE, 255);
+        assert_eq!(c.get(50, 15), BLACK, "left of the oldest point stays empty");
+        assert_ne!(c.get(85, 15), BLACK, "between the points is filled");
+        assert_eq!(c.get(85, 10), WHITE, "the line");
+    }
+
+    #[test]
+    fn changing_the_newest_value_only_repaints_the_last_segment() {
+        let r = RectF::new(0.0, 0.0, 100.0, 30.0);
+        let mut a = Canvas::new(100, 30, BLACK);
+        let mut b = Canvas::new(100, 30, BLACK);
+        a.chart(r, &[0.2, 0.6, 0.4, 0.3], 10.0, WHITE, 200);
+        b.chart(r, &[0.2, 0.6, 0.4, 0.9], 10.0, WHITE, 200);
+        let x_prev = chart_x(r, 4, 10.0, 2) as usize;
+        for y in 0..30 {
+            for x in 0..x_prev - 1 {
+                assert_eq!(a.get(x, y), b.get(x, y), "({x}, {y})");
+            }
+        }
+        assert!((x_prev..100).any(|x| (0..30).any(|y| a.get(x, y) != b.get(x, y))));
     }
 
     #[test]

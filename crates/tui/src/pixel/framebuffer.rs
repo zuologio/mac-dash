@@ -146,7 +146,6 @@ pub fn pack_rect(c: &Canvas, f: &Format, rotate: u8, r: IRect, out: &mut [u8]) {
 
 /// The physical rows `rects` touch, as sorted, merged [start, end) bands:
 /// each band is one contiguous write to the framebuffer.
-#[allow(dead_code)] // until the run loop presents dirty rects
 pub fn row_bands(f: &Format, rotate: u8, rects: &[IRect]) -> Vec<(usize, usize)> {
     let rotate = rotate & 3;
     let (w, h) = logical_size(f, rotate);
@@ -254,7 +253,6 @@ impl Framebuffer {
     /// Pack only `rects` into the persistent buffer and write only the
     /// physical rows they touch, one write per band. The rest of the buffer
     /// still holds the last frame, which is what the panel shows.
-    #[allow(dead_code)] // until the run loop presents dirty rects
     pub fn present_rects(&mut self, c: &Canvas, rects: &[IRect]) -> io::Result<()> {
         if !fits(c, &self.format, self.rotate, &self.buf) {
             return Ok(());

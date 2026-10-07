@@ -143,13 +143,17 @@ pub fn run(
         let off = hdmi.as_ref().is_some_and(|p| p.is_off());
         if !off && should_redraw(last_frame, t, last_packet) {
             let frame = scene.render(&dash, t);
-            match session.fb.present(frame) {
+            let written = session.fb.present_rects(frame.canvas, &frame.dirty);
+            match written {
                 Ok(()) => write_failed = false,
-                Err(e) if !write_failed => {
-                    eprintln!("macdash: framebuffer write failed: {e}");
+                Err(e) => {
+                    if !write_failed {
+                        eprintln!("macdash: framebuffer write failed: {e}");
+                    }
                     write_failed = true;
+                    // The panel may hold part of a frame: send all of it next.
+                    scene.invalidate();
                 }
-                Err(_) => {}
             }
             last_frame = Some(t);
         }
