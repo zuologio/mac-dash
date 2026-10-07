@@ -17,3 +17,4 @@ ratatui = "0.29"
 crossterm = "0.28"
 libc = "0.2"
 socket2 = { version = "0.5", features = ["all"] }
+fontdue = "0.9"

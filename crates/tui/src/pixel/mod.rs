@@ -6,3 +6,4 @@
 #![allow(dead_code)]
 
 pub mod canvas;
+pub mod text;
