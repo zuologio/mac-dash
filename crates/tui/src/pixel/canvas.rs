@@ -4,8 +4,9 @@
 //! pixel centre to the shape's edge becomes an alpha. Blending is integer
 //! maths on u8 channels, because the Pi Zero's ARMv6 core is slow at
 //! floating point: a float canvas cost 460 ms a frame there, this ~100 ms.
-//! Every shape clips to the canvas, so nothing here can panic on a bad
-//! rectangle.
+//! Every drawing primitive clips to the canvas, so none of them can panic
+//! on a bad rectangle. `Canvas::get` is the exception: it is for in-bounds
+//! reads (tests) and panics outside the canvas.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rgb(pub u8, pub u8, pub u8);
@@ -245,10 +246,21 @@ impl Canvas {
             let u = u * u * (3.0 - 2.0 * u);
             (data[i] * (1.0 - u) + data[j] * u).clamp(0.0, 1.0)
         };
+        if !(r.x.is_finite() && r.y.is_finite() && r.h.is_finite()) {
+            return;
+        }
         let base = r.y + r.h;
-        let cols = r.w.round() as i32;
-        for k in 0..cols {
-            let x = r.x as i32 + k;
+        // Only columns that land on the canvas: a huge or infinite width
+        // must not loop over the part that is off it.
+        let x0 = r.x.floor() as f64;
+        let cols = r.w.round() as f64;
+        let k_lo = (-x0).max(0.0);
+        let k_hi = cols.min(self.w as f64 - x0);
+        if k_hi.is_nan() || k_lo.is_nan() || k_hi <= k_lo {
+            return;
+        }
+        for k in k_lo as i32..k_hi as i32 {
+            let x = (x0 + k as f64) as i32;
             let t = (k as f32 + 0.5) / r.w;
             let top = base - at(t) * r.h;
             let span = (base - top).max(1.0);
@@ -260,7 +272,11 @@ impl Canvas {
             let t0 = base - at((k as f32) / r.w) * r.h;
             let t1 = base - at((k as f32 + 1.0) / r.w) * r.h;
             let (lo, hi) = (t0.min(t1) - 1.0, t0.max(t1) + 1.0);
-            for y in lo.floor() as i32..hi.ceil() as i32 + 1 {
+            let (y_lo, y_hi) = (
+                (lo.floor() as i32).max(0),
+                (hi.ceil() as i32).saturating_add(1).min(self.h as i32),
+            );
+            for y in y_lo..y_hi {
                 let yc = y as f32 + 0.5;
                 self.blend(x, y, c, alpha(255, (yc - lo).min(hi - yc) + 0.5));
             }
@@ -269,7 +285,11 @@ impl Canvas {
 
     /// A dashed horizontal line: 2 px on, 2 px off.
     pub fn dashed_hline(&mut self, x0: i32, x1: i32, y: i32, c: Rgb, a: u8) {
-        for x in x0..x1 {
+        if y < 0 || y as usize >= self.h {
+            return;
+        }
+        // The phase stays tied to absolute x, so clipping does not shift it.
+        for x in x0.max(0)..x1.min(self.w as i32) {
             if x.rem_euclid(4) < 2 {
                 self.blend(x, y, c, a);
             }
@@ -322,6 +342,32 @@ mod tests {
         c.area(RectF::new(0.0, 0.0, 10.0, 10.0), &[], WHITE, 255);
         c.ring(5.0, 5.0, 0.0, 0.0, 0.5, WHITE, WHITE);
         assert!(c.px.iter().all(|&p| p == BLACK));
+    }
+
+    #[test]
+    fn huge_rects_and_lines_return_promptly_and_clip() {
+        let mut c = Canvas::new(10, 10, BLACK);
+        let data = [0.2, 0.9, 0.5];
+        c.area(RectF::new(1e9, 1e9, 1e9, 1e9), &data, WHITE, 255);
+        c.area(RectF::new(-1e9, 0.0, f32::INFINITY, 1e9), &data, WHITE, 255);
+        c.area(RectF::new(f32::NAN, 0.0, 5.0, 5.0), &data, WHITE, 255);
+        c.dashed_hline(i32::MIN, i32::MAX, -1, WHITE, 255);
+        c.dashed_hline(0, 10, 99, WHITE, 255);
+        c.dashed_hline(i32::MIN, i32::MAX, 10, WHITE, 255);
+        let mut d = Canvas::new(10, 10, BLACK);
+        d.area(RectF::new(1e9, 1e9, 1e9, 1e9), &data, WHITE, 255);
+        d.dashed_hline(i32::MIN, i32::MAX, 5, WHITE, 255);
+        assert!(c.px.iter().all(|&p| p == BLACK));
+        assert_eq!(d.get(0, 5), WHITE);
+    }
+
+    #[test]
+    fn dashed_hline_is_two_on_two_off() {
+        let mut c = Canvas::new(8, 3, BLACK);
+        c.dashed_hline(0, 8, 1, WHITE, 255);
+        let row: Vec<bool> = (0..8).map(|x| c.get(x, 1) == WHITE).collect();
+        assert_eq!(row, [true, true, false, false, true, true, false, false]);
+        assert_eq!(c.get(0, 0), BLACK);
     }
 
     #[test]
