@@ -1,9 +1,12 @@
 //! The pixel renderer's main loop: the same data flow as the text loop in
 //! main.rs, with the framebuffer instead of a terminal.
 //!
-//! Cadence: a frame a second, or two while data flows. The agent sends a
-//! packet every 200 ms, so while it streams the glide window never closes;
-//! the frame interval while gliding is what sets the CPU cost on the Pi.
+//! Cadence: like the text dashboard, 10 frames a second while values glide
+//! or a packet has arrived since the last frame, and one a second otherwise
+//! (charts step and the clock ticks once a second). A frame only redraws
+//! and writes the regions whose content changed, so a tick that changes
+//! nothing visible costs almost nothing; that, not a low frame rate, is
+//! what keeps the Pi Zero inside its CPU budget.
 
 use std::io::{self, Read};
 use std::time::Duration;
@@ -16,24 +19,33 @@ use super::values::DESKTOP_BOTTOM;
 use crate::brightness::MaybeBacklight;
 use crate::hdmi::HdmiPower;
 use crate::receiver::LatestPacket;
-use crate::state::{Dashboard, EASE_MS};
+use crate::state::Dashboard;
 
 const IDLE_MS: u64 = 1000;
-/// Frame interval while values glide. 5 Hz packets keep the glide window
-/// permanently open, so this is the streaming frame rate: 500 ms is 2
-/// frames a second. 200 ms (5 fps) took about half the Pi Zero's core
-/// against a 13-19% budget, and the CPU budget wins over smoothness.
-const GLIDE_FRAME_MS: u64 = 500;
+/// Frame interval while something moves: 10 Hz, the text dashboard's rate.
+const FRAME_MS: u64 = 100;
+/// The loop wakes on a grid of this step to poll packets, keys and signals.
 const POLL_MS: u64 = 50;
 
-pub fn should_redraw(last_ms: Option<u64>, now_ms: u64, last_packet_ms: Option<u64>) -> bool {
+/// Whether to draw a frame now. `busy` is true while values glide or a
+/// packet is waiting to be shown. Polls fall on a 50 ms grid but wake a
+/// little late, so a busy frame is due half a poll early: otherwise one
+/// late wake-up would skip a grid point and leave a 150 ms gap.
+pub fn should_redraw(last_ms: Option<u64>, now_ms: u64, busy: bool) -> bool {
     let Some(last) = last_ms else { return true };
     let since = now_ms.saturating_sub(last);
-    if since >= IDLE_MS {
-        return true;
+    since >= IDLE_MS || (busy && since + POLL_MS / 2 >= FRAME_MS)
+}
+
+/// How long to sleep from `now_ms` to the next point of the poll grid that
+/// started at `origin_ms`: the time a frame took comes out of the sleep, so
+/// the cadence holds, and no sleep is longer than a poll, so a stop request
+/// is seen within 50 ms.
+pub fn sleep_ms(origin_ms: u64, now_ms: u64) -> u64 {
+    match now_ms.checked_sub(origin_ms) {
+        Some(d) => POLL_MS - d % POLL_MS,
+        None => POLL_MS,
     }
-    let gliding = last_packet_ms.is_some_and(|p| now_ms.saturating_sub(p) < EASE_MS);
-    gliding && since >= GLIDE_FRAME_MS
 }
 
 /// Raw mode on the console for as long as this lives, so keys arrive one at
@@ -121,13 +133,15 @@ pub fn run(
     let mut scene = Scene::new(w, h);
     let mut dash = Dashboard::new();
     let mut last_frame: Option<u64> = None;
-    let mut last_packet: Option<u64> = None;
+    // A packet that arrived after the last frame and is not on screen yet.
+    let mut unseen = false;
     let mut write_failed = false;
+    let origin = now();
 
     while !stop_requested() && !quit_pressed() {
         if let Some((pkt, arrived)) = rx.take() {
             dash.ingest(pkt, arrived);
-            last_packet = Some(arrived);
+            unseen = true;
         }
         let t = now();
         let wants = dash.presence.wants_backlight(t);
@@ -141,7 +155,7 @@ pub fn run(
             }
         }
         let off = hdmi.as_ref().is_some_and(|p| p.is_off());
-        if !off && should_redraw(last_frame, t, last_packet) {
+        if !off && should_redraw(last_frame, t, unseen || dash.easing(t)) {
             let frame = scene.render(&dash, t);
             let written = session.fb.present_rects(frame.canvas, &frame.dirty);
             match written {
@@ -156,8 +170,9 @@ pub fn run(
                 }
             }
             last_frame = Some(t);
+            unseen = false;
         }
-        std::thread::sleep(Duration::from_millis(POLL_MS));
+        std::thread::sleep(Duration::from_millis(sleep_ms(origin, now())));
     }
     // `session` drops here: raw mode off, then the console back to text.
     Ok(())
@@ -167,49 +182,89 @@ pub fn run(
 mod tests {
     use super::*;
 
+    fn packet() -> macdash_proto::StatsPacket {
+        use macdash_proto::{Cpu, Mem, StatsPacket, PROTOCOL_VERSION};
+        StatsPacket {
+            v: PROTOCOL_VERSION,
+            ts: 0,
+            host: "t".into(),
+            uptime_s: 1,
+            cpu: Cpu { total: None, user: None, sys: None, nice: None, load: [0.0; 3], ncpu: 2, cores: vec![5.0, 9.0] },
+            mem: Mem { used: 1, total: 2, pressure: 1.0, swap_used: 0, swap_total: 0, compressed: 0 },
+            net: None,
+            temp: None,
+            display_asleep: None,
+            procs: vec![],
+        }
+    }
+
     #[test]
     fn first_frame_is_always_drawn() {
-        assert!(should_redraw(None, 0, None));
+        assert!(should_redraw(None, 0, false));
     }
 
     #[test]
     fn idle_screens_redraw_once_a_second() {
-        assert!(!should_redraw(Some(1000), 1500, None));
-        assert!(!should_redraw(Some(1000), 1999, Some(0)));
-        assert!(should_redraw(Some(1000), 2000, None));
+        assert!(!should_redraw(Some(1000), 1500, false));
+        assert!(!should_redraw(Some(1000), 1900, false));
+        assert!(should_redraw(Some(1000), 2000, false));
     }
 
     #[test]
-    fn a_fresh_packet_adds_frames_while_values_glide() {
-        // Packet at 1200, last frame 1000: the next frame is at 1500, while
-        // the packet is still under EASE_MS old.
-        assert!(!should_redraw(Some(1000), 1300, Some(1200)));
-        assert!(!should_redraw(Some(1000), 1450, Some(1200)));
-        assert!(should_redraw(Some(1000), 1500, Some(1200)));
-        // A packet EASE_MS old by then has finished gliding: no extra frame.
-        assert!(!should_redraw(Some(1000), 1500, Some(1100)));
-        // After the glide window, back to once a second.
-        assert!(!should_redraw(Some(1600), 2100, Some(1100)));
+    fn busy_screens_redraw_at_ten_hertz() {
+        assert!(!should_redraw(Some(1000), 1050, true));
+        assert!(should_redraw(Some(1000), 1100, true));
+        // A poll that wakes a millisecond early still keeps the cadence.
+        assert!(should_redraw(Some(1000), 1098, true));
     }
 
     #[test]
-    fn streaming_at_5_hz_draws_two_frames_a_second() {
-        // The real loop: a packet every 200 ms, an iteration every 50 ms.
+    fn sleeps_land_on_the_poll_grid() {
+        assert_eq!(sleep_ms(0, 0), POLL_MS);
+        assert_eq!(sleep_ms(0, 30), POLL_MS - 30);
+        assert_eq!(sleep_ms(1000, 1049), 1);
+        // A slow frame (a static rebuild) skips to the next grid point
+        // instead of sleeping a full poll after it.
+        assert_eq!(sleep_ms(0, 170), 30);
+        assert!(sleep_ms(500, 0) <= POLL_MS, "a clock behind the origin");
+    }
+
+    /// The real loop: 5 Hz packets, polls on a 50 ms grid that wake up to
+    /// 3 ms late, and a render that takes 30 ms. While values glide there
+    /// is a frame at least every 100 ms (plus wake-up jitter); once the
+    /// packets stop, at most one a second.
+    #[test]
+    fn streaming_glides_at_ten_hertz_and_idles_at_one() {
+        let mut d = Dashboard::new();
         let mut frames = Vec::new();
         let mut last_frame = None;
-        let mut last_packet = None;
-        for t in (0..3000).step_by(POLL_MS as usize) {
-            if t % 200 == 0 {
-                last_packet = Some(t);
+        let mut unseen = false;
+        let mut t: u64 = 0;
+        let origin = 0;
+        let mut next_packet = 0;
+        while t < 6000 {
+            if t >= next_packet && next_packet < 3000 {
+                let mut p = packet();
+                p.cpu.total = Some((next_packet / 200 % 7) as f32 * 10.0);
+                d.ingest(p, t);
+                next_packet += 200;
+                unseen = true;
             }
-            if should_redraw(last_frame, t, last_packet) {
+            if should_redraw(last_frame, t, unseen || d.easing(t)) {
                 frames.push(t);
                 last_frame = Some(t);
+                unseen = false;
+                t += 30;
             }
+            t += sleep_ms(origin, t) + t % 4;
         }
-        for start in (0..=2000).step_by(POLL_MS as usize) {
+        let streaming: Vec<_> = frames.iter().filter(|&&f| f >= 200 && f < 3000).collect();
+        for w in streaming.windows(2) {
+            assert!(w[1] - w[0] <= 100 + 10, "gap {} -> {}: {frames:?}", w[0], w[1]);
+        }
+        for start in (3500..=5000).step_by(50) {
             let n = frames.iter().filter(|&&f| f >= start && f < start + 1000).count();
-            assert!(n <= 2, "{n} frames in [{start}, {}): {frames:?}", start + 1000);
+            assert!(n <= 1, "{n} frames in [{start}, {}): {frames:?}", start + 1000);
             assert!(n >= 1, "no frame in [{start}, {}): {frames:?}", start + 1000);
         }
     }
