@@ -360,7 +360,6 @@ impl Scene {
     }
 }
 
-/// The CPU card's history chart.
 /// The part of `chart` that `len` of `cols` columns occupy, anchored at the
 /// right edge (newest data), because `Canvas::area` spreads whatever it is
 /// given across the full width.
@@ -375,6 +374,7 @@ fn history_caption() -> String {
     format!("{} min", HISTORY as u64 * STATS_INTERVAL_MS / 60_000)
 }
 
+/// The CPU card's history chart.
 fn cpu_chart(cpu: RectF) -> RectF {
     RectF::new(cpu.x + 20.0, cpu.y + 162.0, cpu.w - 40.0, (cpu.h - 182.0).max(0.0))
 }
