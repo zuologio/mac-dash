@@ -20,7 +20,7 @@
 // examples that include this module by path.
 #![allow(dead_code)]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use macdash_proto::Presence;
 use ratatui::style::Color;
@@ -35,6 +35,9 @@ const BLUE: Color = Color::Rgb(0x5a, 0xa9, 0xf0);
 const VIOLET: Color = Color::Rgb(0xc8, 0x6e, 0xf0);
 const CLASSIC_BLUE: Color = Color::Rgb(0x52, 0x93, 0xe1);
 
+/// macOS dark-mode window background.
+pub const GRAPHITE_BG: Color = Color::Rgb(0x1e, 0x1e, 0x1e);
+
 pub struct Theme {
     pub name: &'static str,
     pub fg: Color,
@@ -47,6 +50,11 @@ pub struct Theme {
     pub rx: Color,
     pub tx: Color,
     pub console_palette: ConsolePalette,
+    /// Window background. `None` leaves the terminal's own, which on the Pi
+    /// is black.
+    pub bg: Option<Color>,
+    /// Panels with rounded corners, like macOS windows.
+    pub rounded: bool,
 }
 
 /// How much of the Linux console's palette a theme reprograms.
@@ -90,6 +98,8 @@ pub const THEMES: &[Theme] = &[
         rx: CLASSIC_BLUE,
         tx: Color::Rgb(0xc0, 0x8a, 0xe8),
         console_palette: ConsolePalette::Only(&[CLASSIC_BLUE]),
+        bg: None,
+        rounded: false,
     },
     // Traffic light, shown as designed: green, amber, red.
     Theme {
@@ -104,6 +114,8 @@ pub const THEMES: &[Theme] = &[
         rx: BLUE,
         tx: VIOLET,
         console_palette: ConsolePalette::Exact,
+        bg: None,
+        rounded: false,
     },
     // Colour only means trouble: normal readings are plain text.
     Theme {
@@ -118,6 +130,8 @@ pub const THEMES: &[Theme] = &[
         rx: BLUE,
         tx: VIOLET,
         console_palette: ConsolePalette::Exact,
+        bg: None,
+        rounded: false,
     },
     // Cool to hot: teal, warm amber, red-orange.
     Theme {
@@ -132,6 +146,8 @@ pub const THEMES: &[Theme] = &[
         rx: Color::Rgb(0x5f, 0x6f, 0xf5),
         tx: VIOLET,
         console_palette: ConsolePalette::Exact,
+        bg: None,
+        rounded: false,
     },
     // Amber phosphor: one hue in two brightnesses, red kept for critical.
     Theme {
@@ -146,6 +162,8 @@ pub const THEMES: &[Theme] = &[
         rx: Color::Rgb(0xf0, 0xd8, 0xa8),
         tx: Color::Rgb(0xa8, 0x74, 0x20),
         console_palette: ConsolePalette::Exact,
+        bg: None,
+        rounded: false,
     },
     // Classic's blue with every colour shown exactly: amber instead of the
     // console's yellow, a softer red, violet upload and warm white text.
@@ -161,6 +179,8 @@ pub const THEMES: &[Theme] = &[
         rx: CLASSIC_BLUE,
         tx: VIOLET,
         console_palette: ConsolePalette::Exact,
+        bg: None,
+        rounded: false,
     },
     // Greys only, so red is the one colour on screen and always means
     // critical. Warning is told apart by brightness: normal is a mid-light
@@ -179,8 +199,45 @@ pub const THEMES: &[Theme] = &[
         rx: TEXT,
         tx: Color::Rgb(0xa0, 0xa4, 0xa8),
         console_palette: ConsolePalette::Only(&[]),
+        bg: None,
+        rounded: false,
+    },
+    // macOS dark mode: window grey background, the system colours, and
+    // rounded panels.
+    Theme {
+        name: "graphite",
+        fg: Color::Rgb(0xe5, 0xe5, 0xe7),
+        dim: Color::Rgb(0x98, 0x98, 0x9d),
+        border: Color::Rgb(0x38, 0x38, 0x3a),
+        accent: CLASSIC_BLUE,
+        ok: Color::Rgb(0x30, 0xd1, 0x58),
+        warn: Color::Rgb(0xff, 0x9f, 0x0a),
+        crit: Color::Rgb(0xff, 0x45, 0x3a),
+        rx: CLASSIC_BLUE,
+        tx: Color::Rgb(0xbf, 0x5a, 0xf2),
+        console_palette: ConsolePalette::Exact,
+        bg: Some(GRAPHITE_BG),
+        rounded: true,
     },
 ];
+
+/// Whether output goes to the Linux console, which shows the background by
+/// reprogramming its palette slot 0 rather than painting every cell: an RGB
+/// background would be rounded into the dark grey border's slot.
+static CONSOLE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_console(on: bool) {
+    CONSOLE.store(on, Ordering::Relaxed);
+}
+
+/// The background to paint cells with, if the terminal needs it painted.
+pub fn bg() -> Option<Color> {
+    current().bg.filter(|_| !CONSOLE.load(Ordering::Relaxed))
+}
+
+pub fn rounded() -> bool {
+    current().rounded
+}
 
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
 
@@ -257,6 +314,9 @@ pub fn console_palette(t: &Theme) -> String {
         ConsolePalette::Exact => &t.colors(),
     };
     let mut s = String::from("\x1b]R");
+    if let Some(Color::Rgb(r, g, b)) = t.bg {
+        s.push_str(&format!("\x1b]P0{r:02x}{g:02x}{b:02x}"));
+    }
     for &c in colors {
         if let (Some(slot @ 1..=15), Color::Rgb(r, g, b)) = (console_slot(c), c) {
             if slot != 7 && slot != 8 {
@@ -324,6 +384,17 @@ mod tests {
         assert_eq!(console_slot(t.crit), Some(9), "red");
         assert_ne!(console_slot(t.ok), console_slot(t.warn), "warning stands out");
         assert_eq!(console_palette(t), "\x1b]R");
+    }
+
+    #[test]
+    fn graphite_paints_its_background_into_slot_zero() {
+        let t = &THEMES[by_name("graphite").unwrap()];
+        assert!(t.rounded);
+        let s = console_palette(t);
+        assert!(s.starts_with("\x1b]R\x1b]P01e1e1e"), "{s:?}");
+        // Each system colour keeps a slot of its own on the Pi.
+        let slots = [t.ok, t.warn, t.crit, t.accent, t.tx].map(console_slot);
+        assert_eq!(slots, [Some(10), Some(11), Some(9), Some(14), Some(13)]);
     }
 
     #[test]

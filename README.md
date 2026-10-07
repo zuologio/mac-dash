@@ -100,7 +100,7 @@ them again on later installs to keep them.
 | `--landscape-flipped` | Panel upside down, connectors at the bottom left |
 | `--landscape` | Back to normal orientation |
 | `--font <name>` | Console font. The default `Lat15-Terminus16` fits a 1024×600 panel; use `Lat15-Terminus32x16` for larger text on a 1080p screen |
-| `--ttf <file>` `--ttf-size <px>` | Turn your own `.ttf`/`.otf` into the console font (needs `freetype-py`) |
+| `--ttf <file>` `--ttf-size <px>` `--ttf-cell <WxH>` | Turn your own `.ttf`/`.otf` into the console font (needs `freetype-py`). `--ttf-cell 8x16` keeps the full 128x37 layout |
 | `--mac <ip>` | Also announce directly to this Mac. Use it if the screen stays on `WAITING` (some Wi-Fi routers block multicast). The installer fills this in automatically |
 | `--zero2` | Install the Pi Zero 2 W build |
 
@@ -123,6 +123,7 @@ Orientation and font choices are kept on later installs unless you pass a new on
 | `phosphor` | dark amber | bright amber | red-orange |
 | `sapphire` | blue (`#5293E1`) | amber | soft red, with violet upload |
 | `grey` | light grey | white | red, the only colour on screen |
+| `graphite` | green | orange | red: macOS dark mode, with a window-grey background and rounded panels |
 
 Press **`t`** while the dashboard is running to cycle through them, then set your
 favourite with `--theme`. On the Pi's console, all themes except `classic`
@@ -139,6 +140,7 @@ cargo run --release -p macdash-tui -- --theme thermal
 cargo run --release -p macdash-tui -- --theme phosphor
 cargo run --release -p macdash-tui -- --theme sapphire
 cargo run --release -p macdash-tui -- --theme grey
+cargo run --release -p macdash-tui -- --theme graphite
 ```
 
 To make one the Pi's default, install with it (add your other options, such
@@ -152,6 +154,14 @@ as `--hdmi`, since they are not kept between installs):
 ./deploy/install-pi.sh pi@192.168.0.148 --theme phosphor
 ./deploy/install-pi.sh pi@192.168.0.148 --theme sapphire
 ./deploy/install-pi.sh pi@192.168.0.148 --theme grey
+./deploy/install-pi.sh pi@192.168.0.148 --theme graphite
+```
+
+`graphite` looks closest to macOS with JetBrains Mono Bold as the console font:
+
+```bash
+./deploy/install-pi.sh pi@192.168.0.148 --theme graphite \
+    --ttf ~/Library/Fonts/JetBrainsMonoNLNerdFontMono-Bold.ttf --ttf-size 13 --ttf-cell 8x16
 ```
 
 ## Using it
@@ -235,7 +245,7 @@ as JSON.
 
 | Flag | |
 |---|---|
-| `--theme <name>` | `classic`, `traffic`, `quiet`, `thermal`, `phosphor`, `sapphire`, `grey` |
+| `--theme <name>` | `classic`, `traffic`, `quiet`, `thermal`, `phosphor`, `sapphire`, `grey`, `graphite` |
 | `--hdmi` | HDMI off while the Mac's display sleeps (VC4/KMS, `fb0`) |
 | `--backlight <path>` | Backlight to darken while the Mac sleeps |
 | `--font <path>` | Console font to load before drawing |

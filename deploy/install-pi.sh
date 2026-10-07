@@ -10,7 +10,7 @@ HOST="${1:-}"
 if [[ -z "$HOST" ]]; then
     echo "Usage: $0 <user@host> [--backlight <sysfs-path>] [--mac <ip>]"
     echo "          [--font <console-font>] [--hdmi] [--portrait|--landscape|--landscape-flipped] [--zero2]"
-    echo "          [--theme classic|traffic|quiet|thermal|phosphor|sapphire|grey]"
+    echo "          [--theme classic|traffic|quiet|thermal|phosphor|sapphire|grey|graphite]"
     echo
     echo "  --theme  colour scheme; press t on a keyboard to preview them."
     echo "  --hdmi   switch off HDMI while the Mac's display sleeps (VC4/KMS)."
@@ -21,6 +21,7 @@ if [[ -z "$HOST" ]]; then
     echo "           look the distro does not ship (DepartureMono,"
     echo "           BigBlueTerminal). Needs freetype-py on this machine."
     echo "  --ttf-size  pixel size for --ttf (default 24)."
+    echo "  --ttf-cell  cell for --ttf, e.g. 8x16 to keep the 128x37 layout."
     echo "  --font   console font to patch and load, without the .psf.gz."
     echo "           Keeps the installed typeface on updates unless specified."
     echo "           Default Lat15-Terminus16 (8x16 cells: 128x37 on the"
@@ -44,6 +45,7 @@ KEEP_FONT=1
 # A .ttf/.otf to rasterize instead, for a font the distro does not ship.
 TTF_FONT=""
 TTF_SIZE="24"
+TTF_CELL=""
 TARGET="arm-unknown-linux-musleabihf"
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -55,6 +57,7 @@ while [[ $# -gt 0 ]]; do
         --font)      CONSOLE_FONT="$2"; KEEP_FONT=0; shift 2 ;;
         --ttf)       TTF_FONT="$2"; shift 2 ;;
         --ttf-size)  TTF_SIZE="$2"; shift 2 ;;
+        --ttf-cell)  TTF_CELL="$2"; shift 2 ;;
         --mac)       MAC_ADDR="$2"; shift 2 ;;
         --theme)     THEME="$2"; shift 2 ;;
         --zero2)     TARGET="armv7-unknown-linux-musleabihf"; shift ;;
@@ -114,7 +117,8 @@ if [[ -n "$TTF_FONT" ]]; then
     fi
     echo "Rasterizing $(basename "$TTF_FONT") at ${TTF_SIZE}px…"
     if ! python3 deploy/ttf-to-console-font.py \
-            "$TTF_FONT" "$TTF_SIZE" "$STAGE/macdash-font.psf"; then
+            "$TTF_FONT" "$TTF_SIZE" "$STAGE/macdash-font.psf" \
+            ${TTF_CELL:+--cell="$TTF_CELL"}; then
         echo "Could not rasterize it; install freetype-py or drop --ttf."
         exit 1
     fi

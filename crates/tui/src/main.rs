@@ -194,6 +194,7 @@ fn main() {
     };
 
     ui::theme::select(args.theme);
+    ui::theme::set_console(std::env::var("TERM").as_deref() == Ok("linux"));
 
     if !args.no_beacon {
         beacon::spawn(port, args.name.clone(), args.macs.clone(), rx.agent.clone());
