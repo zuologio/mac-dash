@@ -28,7 +28,7 @@ use super::canvas::{hex, Canvas, IRect, RectF, Rgb};
 use super::layout::{core_slots, layout, proc_rows, Layout, MENU_H, RADIUS, ROW_H};
 use super::text::{Face, Typefaces};
 use super::values::*;
-use crate::state::{Dashboard, Ring, HISTORY, SAMPLES_PER_COLUMN};
+use crate::state::{Dashboard, PiStats, Ring, HISTORY, SAMPLES_PER_COLUMN};
 use crate::ui::format;
 
 const BLACK: Rgb = hex(0x000000);
@@ -58,11 +58,21 @@ pub enum Part {
     Memory,
     Temp,
     Net,
+    Disk,
     Procs,
 }
 
-const PARTS: [Part; 8] =
-    [Part::Menu, Part::CpuValue, Part::CpuCores, Part::CpuChart, Part::Memory, Part::Temp, Part::Net, Part::Procs];
+const PARTS: [Part; 9] = [
+    Part::Menu,
+    Part::CpuValue,
+    Part::CpuCores,
+    Part::CpuChart,
+    Part::Memory,
+    Part::Temp,
+    Part::Net,
+    Part::Disk,
+    Part::Procs,
+];
 
 impl Part {
     /// Parts drawn from gliding values: their models change between
@@ -81,8 +91,9 @@ struct Region {
     model: Option<Model>,
     key: Option<u64>,
     cells: Vec<(IRect, u64)>,
-    /// The packet count and presence `model` was built for.
-    stamp: Option<(u64, Presence)>,
+    /// The packet count and presence `model` was built for, and for the
+    /// menu the Pi's readings.
+    stamp: Option<(u64, Presence, u64)>,
 }
 
 pub struct Scene {
@@ -159,11 +170,15 @@ impl Scene {
             self.invalid = true;
         }
         let full = std::mem::take(&mut self.invalid);
-        let stamp = (dash.packets_received, presence);
+        // The menu also shows the Pi's own readings, which change without
+        // a packet; only its stamp carries them, so a new reading rebuilds
+        // the menu alone.
+        let pi = hash(menu_pi(&dash.pi));
         let (w, h) = (self.frame.w, self.frame.h);
 
         let mut dirty: Vec<(usize, IRect)> = Vec::new();
         for (i, r) in self.regions.iter_mut().enumerate() {
+            let stamp = (dash.packets_received, presence, if r.part == Part::Menu { pi } else { 0 });
             if !(full || r.part.eased() || r.stamp != Some(stamp)) {
                 continue;
             }
@@ -239,7 +254,7 @@ impl Scene {
             t.draw(c, Face::Regular, 13.0, r.x + 28.0, r.y + 104.0, "Start macdash-agent on the Mac and it will be found.", SECONDARY, 255);
             return;
         }
-        let cards = [self.l.cpu, self.l.memory, self.l.temp, self.l.net, self.l.procs];
+        let cards = [self.l.cpu, self.l.memory, self.l.temp, self.l.net, self.l.disk, self.l.procs];
         for r in cards {
             c.shadow(r, RADIUS, 14.0, 4.0, 90);
         }
@@ -252,6 +267,7 @@ impl Scene {
             (self.l.memory, "Memory"),
             (self.l.temp, "Temperature"),
             (self.l.net, "Network"),
+            (self.l.disk, "Disk"),
             (self.l.procs, "Top Apps"),
         ] {
             t.draw(c, Face::SemiBold, 13.0, r.x + 20.0, r.y + 30.0, title, SECONDARY, 255);
@@ -322,6 +338,7 @@ fn regions(l: &Layout, w: usize, h: usize) -> Vec<Region> {
                 Part::Memory => (l.memory, Some(l.memory)),
                 Part::Temp => (l.temp, Some(l.temp)),
                 Part::Net => (l.net, Some(l.net)),
+                Part::Disk => (l.disk, Some(l.disk)),
                 Part::Procs => (l.procs, Some(l.procs)),
             };
             let rect = to_irect(rect, w, h);
@@ -344,6 +361,8 @@ enum Model {
         host: Option<(String, String, String)>,
         label: String,
         tint: Rgb,
+        /// The Pi's own readings, each text with its colour.
+        pi: Vec<(String, Rgb)>,
     },
     CpuValue {
         big: String,
@@ -375,6 +394,14 @@ enum Model {
         rx: (String, &'static str),
         tx: (String, &'static str),
         chart: Chart,
+    },
+    Disk {
+        /// Used fraction as f32 bits.
+        frac: u32,
+        ring: Rgb,
+        pct: String,
+        free: String,
+        of: String,
     },
     Procs(Vec<ProcRow>),
 }
@@ -420,7 +447,7 @@ impl Model {
     /// The key for every pixel of the region outside its cells.
     fn whole(&self) -> u64 {
         match self {
-            Model::CpuValue { .. } | Model::Memory { .. } => hash(0),
+            Model::CpuValue { .. } | Model::Memory { .. } | Model::Disk { .. } => hash(0),
             Model::Cores(v) => hash(v.len()),
             Model::CpuChart(c) => c.body(),
             // Their charts' bodies are cells: a column step leaves the text.
@@ -488,6 +515,16 @@ impl Model {
                     v.push((tail_rect(trend, trend_cols(r, 106.0)), chart.tail()));
                 }
                 v
+            }
+            Model::Disk { frac, ring, pct, free, of } => {
+                let r = l.disk;
+                let k = disk_scale(r);
+                let (cx, cy) = (r.x + r.w / 2.0, r.y + 98.0 * k);
+                let reach = 58.0 * k + 2.0;
+                vec![
+                    (RectF::new(cx - reach, cy - reach, 2.0 * reach, 2.0 * reach), hash((frac, ring, pct))),
+                    (RectF::new(r.x, r.y + 160.0 * k, r.w, r.h - 160.0 * k), hash((free, of))),
+                ]
             }
             Model::Procs(rows) => {
                 let r = l.procs;
@@ -558,6 +595,7 @@ fn model(
         Part::Memory => memory_model(latest?),
         Part::Temp => temp_model(l.temp, t, dash, latest?),
         Part::Net => net_model(l.net, dash, latest?),
+        Part::Disk => disk_model(latest?),
         Part::Procs => procs_model(l.procs, t, latest?),
     })
 }
@@ -577,7 +615,22 @@ fn menu_model(dash: &Dashboard, presence: Presence) -> Model {
         Presence::Asleep => ("Asleep".into(), SECONDARY),
         Presence::Waiting => ("Waiting".into(), ACCENT),
     };
-    Model::Menu { host, label, tint }
+    Model::Menu { host, label, tint, pi: menu_pi(&dash.pi) }
+}
+
+/// "Pi", then each reading the Pi could take, coloured like the Mac's.
+fn menu_pi(pi: &PiStats) -> Vec<(String, Rgb)> {
+    let readings: Vec<(String, Rgb)> = [
+        pi.temp_c.map(|c| (format!("{c:.0}°"), temp_severity(c, LABEL))),
+        pi.cpu_pct.map(|p| (format!("{p:.0}%"), severity(p, LABEL))),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if readings.is_empty() {
+        return readings;
+    }
+    std::iter::once(("Pi".to_string(), SECONDARY)).chain(readings).collect()
 }
 
 fn memory_model(p: &StatsPacket) -> Model {
@@ -596,6 +649,37 @@ fn memory_model(p: &StatsPacket) -> Model {
         pressure: (format!("{:.0}%", m.pressure), severity(m.pressure, GOOD)),
         compressed: format!("{cn} {cu}"),
         swap: (format!("{sn} {su}"), if m.swap_used > 0 { BUSY } else { LABEL }),
+    }
+}
+
+/// Whole gigabytes as the card writes them.
+fn gb(n: u32) -> String {
+    if n >= 1000 {
+        format!("{:.1} TB", n as f32 / 1000.0)
+    } else {
+        format!("{n} GB")
+    }
+}
+
+/// The disk card is laid out for 208 px; a shorter one squeezes the ring
+/// and its text, as the memory card does.
+fn disk_scale(r: RectF) -> f32 {
+    (r.h / 208.0).min(r.w / 208.0).clamp(0.0, 1.0)
+}
+
+fn disk_model(p: &StatsPacket) -> Model {
+    match p.disk.as_ref().filter(|d| d.total > 0) {
+        Some(d) => {
+            let frac = (d.used as f32 / d.total as f32).clamp(0.0, 1.0);
+            Model::Disk {
+                frac: frac.to_bits(),
+                ring: severity(frac * 100.0, GOOD),
+                pct: format!("{:.0}", frac * 100.0),
+                free: format!("{} free", gb(d.total.saturating_sub(d.used))),
+                of: format!("of {}", gb(d.total)),
+            }
+        }
+        None => Model::Disk { frac: 0f32.to_bits(), ring: GOOD, pct: "—".into(), free: String::new(), of: String::new() },
     }
 }
 
@@ -664,7 +748,7 @@ fn procs_model(r: RectF, t: &mut Typefaces, p: &StatsPacket) -> Model {
                 ProcRow {
                     initial: proc_.name.chars().next().map(|ch| ch.to_uppercase().collect()).unwrap_or_default(),
                     color: icon_color(&proc_.name),
-                    name: t.fit(Face::SemiBold, 20.0, &name, name_max),
+                    name: t.fit(Face::Regular, 20.0, &name, name_max),
                     cpu: cpu.to_bits(),
                     cpu_s: format!("{cpu:.1}%"),
                     mem: format!("{m} {unit}"),
@@ -681,7 +765,7 @@ const NAME_X: f32 = 66.0;
 /// whether the bar fits, and the room left for names.
 fn proc_columns(r: RectF) -> (f32, (f32, f32), bool, f32) {
     let cpu_right = r.x + 780.0f32.min(r.w - 180.0);
-    let bar_x = r.x + 400.0;
+    let bar_x = r.x + 400.0f32.min(r.w * 0.43);
     // 90 px leaves room for a 22 px "100.0%" between the bar and its column.
     let bar_w = 280.0f32.min(cpu_right - bar_x - 90.0);
     let show_bar = bar_w >= 40.0;
@@ -691,7 +775,7 @@ fn proc_columns(r: RectF) -> (f32, (f32, f32), bool, f32) {
 
 fn draw(c: &mut Canvas, t: &mut Typefaces, l: &Layout, m: &Model) {
     match m {
-        Model::Menu { host: h, label, tint } => {
+        Model::Menu { host: h, label, tint, pi } => {
             let w = c.w as f32;
             if let Some((host, up, when)) = h {
                 let x = t.draw(c, Face::SemiBold, 14.0, 16.0, 20.0, host, LABEL, 255);
@@ -704,6 +788,10 @@ fn draw(c: &mut Canvas, t: &mut Typefaces, l: &Layout, m: &Model) {
             c.rrect(RectF::new(x, 7.0, cw, 17.0), 8.5, *tint, 46);
             c.rrect(RectF::new(x + 10.0, 13.0, 6.0, 6.0), 3.0, *tint, 255);
             t.draw(c, Face::Medium, 11.5, x + 21.0, 19.5, label, lighten(*tint), 255);
+            let mut px = x + cw + 14.0;
+            for (text, col) in pi {
+                px = t.draw(c, Face::Medium, 12.0, px, 20.0, text, *col, 255) + 8.0;
+            }
         }
         Model::CpuValue { big, finite, user, sys, load } => {
             let r = l.cpu;
@@ -791,6 +879,26 @@ fn draw(c: &mut Canvas, t: &mut Typefaces, l: &Layout, m: &Model) {
             }
             plot(c, trend_area(r, 106.0), trend_cols(r, 106.0), chart, &[(ACCENT, 100), (UPLOAD, 75)]);
         }
+        Model::Disk { frac, ring, pct, free, of } => {
+            let r = l.disk;
+            let k = disk_scale(r);
+            let (cx, cy) = (r.x + r.w / 2.0, r.y + 98.0 * k);
+            c.ring(cx, cy, 52.0 * k, 12.0 * k, f32::from_bits(*frac), WELL, *ring);
+            let (big, small) = ((34.0 * k).round().max(8.0), (14.0 * k).round().max(6.0));
+            let pct_w = t.width(Face::Display, big, pct);
+            if pct == "—" {
+                t.draw(c, Face::Display, big, (cx - pct_w / 2.0).round(), cy + big * 0.36, pct, TERTIARY, 255);
+            } else {
+                let nw = pct_w + t.width(Face::SemiBold, small, "%");
+                let x = t.draw(c, Face::Display, big, (cx - nw / 2.0).round(), cy + big * 0.36, pct, LABEL, 255);
+                t.draw(c, Face::SemiBold, small, x, cy + big * 0.36, "%", SECONDARY, 255);
+            }
+            let (fs, os) = ((15.0 * k).round().max(7.0), (12.0 * k).round().max(6.0));
+            let fw = t.width(Face::Medium, fs, free);
+            t.draw(c, Face::Medium, fs, (cx - fw / 2.0).round(), r.y + 176.0 * k, free, LABEL, 255);
+            let ow = t.width(Face::Regular, os, of);
+            t.draw(c, Face::Regular, os, (cx - ow / 2.0).round(), r.y + 194.0 * k, of, SECONDARY, 255);
+        }
         Model::Procs(rows) => {
             let r = l.procs;
             let (cpu_right, (bar_x, bar_w), show_bar, _) = proc_columns(r);
@@ -800,7 +908,7 @@ fn draw(c: &mut Canvas, t: &mut Typefaces, l: &Layout, m: &Model) {
                 c.rrect(icon, 8.0, row.color, 230);
                 let iw = t.width(Face::SemiBold, 16.0, &row.initial);
                 t.draw(c, Face::SemiBold, 16.0, icon.x + (32.0 - iw) / 2.0, y + 32.0, &row.initial, WHITE, 255);
-                t.draw(c, Face::SemiBold, 20.0, r.x + NAME_X, y + 33.0, &row.name, LABEL, 255);
+                t.draw(c, Face::Regular, 20.0, r.x + NAME_X, y + 33.0, &row.name, LABEL, 255);
                 let cpu = f32::from_bits(row.cpu);
                 if show_bar {
                     c.rrect(RectF::new(bar_x, y + 21.0, bar_w, 10.0), 5.0, WELL, 255);
@@ -907,7 +1015,7 @@ fn lighten(c: Rgb) -> Rgb {
 mod tests {
     use super::*;
     use crate::pixel::canvas::Rgb;
-    use macdash_proto::{Cpu, Mem, Net, Proc, StatsPacket, Temp, PROTOCOL_VERSION};
+    use macdash_proto::{Cpu, Disk, Mem, Net, Proc, StatsPacket, Temp, PROTOCOL_VERSION};
 
     fn packet(name_len: usize, cores: usize) -> StatsPacket {
         StatsPacket {
@@ -934,6 +1042,7 @@ mod tests {
             },
             net: Some(Net { iface: "en0".into(), rx_bps: Some(150_000), tx_bps: Some(10_000), rx_total: 0, tx_total: 0 }),
             temp: Some(Temp { soc: Some(40.4), gpu: None, battery: Some(29.0) }),
+            disk: Some(Disk { used: 312, total: 494 }),
             display_asleep: None,
             procs: (0..8)
                 .map(|i| Proc { pid: i, name: "W".repeat(name_len), cpu: 999.0 / (i + 1) as f32, mem: 128 << 30 })
@@ -989,6 +1098,114 @@ mod tests {
         let waiting = snap(s.render(&Dashboard::new(), 0));
         let live = snap(s.render(&dash(packet(10, 10)), 12_000));
         assert!(differs(&waiting, &live) > 10_000);
+    }
+
+    #[test]
+    fn the_disk_card_shows_its_percentage_and_free_space() {
+        let m = disk_model(&packet(10, 10));
+        let Model::Disk { pct, free, of, ring, .. } = m else { panic!("not a disk model") };
+        assert_eq!((pct.as_str(), free.as_str(), of.as_str()), ("63", "182 GB free", "of 494 GB"));
+        assert_eq!(ring, BUSY, "63% is past the 60% threshold");
+    }
+
+    #[test]
+    fn the_disk_ring_turns_orange_then_red() {
+        for (used, want) in [(250, GOOD), (300, BUSY), (430, CRITICAL)] {
+            let mut p = packet(10, 10);
+            p.disk = Some(Disk { used, total: 494 });
+            let Model::Disk { ring, .. } = disk_model(&p) else { panic!() };
+            assert_eq!(ring, want, "{used} of 494");
+        }
+    }
+
+    #[test]
+    fn terabytes_are_written_as_terabytes() {
+        let mut p = packet(10, 10);
+        p.disk = Some(Disk { used: 500, total: 2000 });
+        let Model::Disk { free, of, .. } = disk_model(&p) else { panic!() };
+        assert_eq!((free.as_str(), of.as_str()), ("1.5 TB free", "of 2.0 TB"));
+    }
+
+    #[test]
+    fn a_missing_or_empty_disk_draws_a_dash_not_a_ring_value() {
+        for disk in [None, Some(Disk { used: 0, total: 0 })] {
+            let mut p = packet(10, 10);
+            p.disk = disk;
+            let Model::Disk { pct, free, .. } = disk_model(&p) else { panic!() };
+            assert_eq!((pct.as_str(), free.as_str()), ("—", ""));
+        }
+        let mut s = Scene::new(1024, 600);
+        let mut p = packet(10, 10);
+        p.disk = None;
+        s.render(&dash(p), 12_000);
+    }
+
+    #[test]
+    fn a_used_figure_above_the_total_cannot_overfill_the_ring() {
+        let mut p = packet(10, 10);
+        p.disk = Some(Disk { used: 600, total: 494 });
+        let Model::Disk { frac, pct, free, .. } = disk_model(&p) else { panic!() };
+        assert_eq!((f32::from_bits(frac), pct.as_str(), free.as_str()), (1.0, "100", "0 GB free"));
+    }
+
+    #[test]
+    fn a_changed_disk_reading_dirties_the_disk_card() {
+        let mut s = Scene::new(1024, 600);
+        let mut d = dash(packet(10, 10));
+        s.render(&d, 12_000);
+        let mut p = packet(10, 10);
+        p.disk = Some(Disk { used: 400, total: 494 });
+        d.ingest(p, 12_200);
+        let disk = s.region(Part::Disk);
+        let f = s.render(&d, 12_200);
+        assert!(f.dirty.iter().any(|r| contains(disk, *r)), "the new reading never reached the card");
+    }
+
+    #[test]
+    fn an_unchanged_disk_reading_leaves_the_disk_card_alone() {
+        let mut s = Scene::new(1024, 600);
+        let mut d = dash(packet(10, 10));
+        s.render(&d, 12_000);
+        d.ingest(packet(10, 10), 12_200);
+        let disk = s.region(Part::Disk);
+        let f = s.render(&d, 12_200);
+        assert!(f.dirty.iter().all(|r| intersect(disk, *r).is_none()), "{:?}", f.dirty);
+    }
+
+    #[test]
+    fn a_new_pi_reading_redraws_only_the_menu_bar() {
+        let mut s = Scene::new(1024, 600);
+        let mut d = dash(packet(10, 10));
+        // Packets have stopped arriving, so only the Pi's reading changes.
+        d.pi = PiStats { temp_c: Some(48.0), cpu_pct: Some(12.0) };
+        s.render(&d, 11_900);
+        let before = snap(s.render(&d, 11_950));
+        d.pi = PiStats { temp_c: Some(61.0), cpu_pct: Some(37.0) };
+        let f = s.render(&d, 12_000);
+        let dirty = f.dirty.clone();
+        let after = snap(f);
+        let menu = s.region(Part::Menu);
+        assert!(!dirty.is_empty(), "the new reading never reached the screen");
+        for r in &dirty {
+            assert!(contains(menu, *r), "{r:?} is outside the menu bar");
+        }
+        assert!(differs(&before, &after) > 0);
+    }
+
+    #[test]
+    fn the_pi_reading_sits_right_of_the_status_pill() {
+        let mut s = Scene::new(1024, 600);
+        let mut d = dash(packet(10, 10));
+        let without = snap(s.render(&d, 11_900));
+        d.pi = PiStats { temp_c: Some(48.0), cpu_pct: Some(12.0) };
+        let with = snap(s.render(&d, 11_950));
+        let changed: Vec<usize> = (0..1024)
+            .filter(|&x| (0..MENU_H as usize).any(|y| without.get(x, y) != with.get(x, y)))
+            .collect();
+        assert!(!changed.is_empty());
+        // The pill is centred and at least 80 px wide; the clock is at the
+        // right edge from about x = 890.
+        assert!(changed.iter().all(|&x| x > 512 + 40 && x < 850), "{:?}..{:?}", changed.first(), changed.last());
     }
 
     #[test]

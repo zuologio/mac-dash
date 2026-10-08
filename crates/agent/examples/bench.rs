@@ -10,8 +10,8 @@ mod ffi;
 use std::time::Instant;
 
 use collect::{
-    cpu::CpuCollector, display::DisplayCollector, mem::MemCollector, net::NetCollector,
-    procs::ProcCollector, temp::TempCollector,
+    cpu::CpuCollector, disk::DiskCollector, display::DisplayCollector, mem::MemCollector,
+    net::NetCollector, procs::ProcCollector, temp::TempCollector,
 };
 
 fn bench<F: FnMut()>(name: &str, iters: u32, mut f: F) -> f64 {
@@ -62,6 +62,7 @@ fn main() {
     // Same treatment as temp: advance the clock past the cache interval so
     // the hardware path is what gets timed.
     let mut display = DisplayCollector::new();
+    let disk = DiskCollector::new();
     let mut dt = 0u64;
     let dp = bench("display (hardware)", 200, || {
         dt += 10_000;
@@ -126,6 +127,7 @@ fn main() {
             mem: mem.sample(),
             net: net.sample(Some(target), ts),
             temp: temp.sample(ts),
+            disk: disk.sample(),
             display_asleep: display.sample(ts),
             procs: cached.clone(),
         };

@@ -45,7 +45,8 @@ the Mac, or with `--text`, you get the text dashboard shown below.
 ```
 
 **Shows:** CPU (total, per core, user/system, load) · memory (used, pressure,
-compressed, swap) · SoC and battery temperature · network throughput · top apps,
+compressed, swap) · SoC and battery temperature · network throughput · disk
+usage (the Mac's data volume, used and free) · top apps,
 each app's helper processes counted together (3 on the pixel panel, 8 in the
 text view) · the Mac's clock.
 
@@ -179,6 +180,9 @@ framebuffer cannot be used, it falls back to text by itself. SSH sessions and
 Mac terminals always get the text dashboard. The pixel dashboard redraws twice
 a second while the Mac streams, and once a second when idle.
 
+**The Pi's own load:** right of the status pill, the pixel dashboard shows
+the Pi's temperature and CPU use (`Pi 48° 12%`), updated every 5 seconds.
+
 **Keys:** `t` cycles themes · `q`, `Esc` or `Ctrl-C` quits.
 
 **Status line** at the bottom left:
@@ -217,7 +221,7 @@ an IP address, and a Pi that reboots or gets a new address is found again
 within seconds.
 
 **Sending the numbers.** Five times a second the agent reads the Mac's stats
-straight from macOS (CPU, memory, temperature, network, top apps). It sends
+straight from macOS (CPU, memory, temperature, network, disk, top apps). It sends
 them as one small JSON message in a single UDP packet to port 9999. There is no
 connection to keep alive: if a packet is lost, the next one arrives 200 ms
 later. Each packet is a complete snapshot, kept under 1400 bytes so the network

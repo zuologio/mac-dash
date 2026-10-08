@@ -11,4 +11,5 @@ pub mod framebuffer;
 pub mod console;
 pub mod values;
 pub mod scene;
+pub mod pi_stats;
 pub mod run;

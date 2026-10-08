@@ -14,6 +14,7 @@ use std::time::Duration;
 use super::canvas::Canvas;
 use super::console::{install_stop_handlers, remove_stop_handlers, stop_requested, GraphicsMode};
 use super::framebuffer::Framebuffer;
+use super::pi_stats::{PiSampler, SAMPLE_MS};
 use super::scene::Scene;
 use super::values::DESKTOP_BOTTOM;
 use crate::brightness::MaybeBacklight;
@@ -149,6 +150,8 @@ pub fn run(
     let mut write_failed = false;
     let origin = now();
     let mut last_full: Option<u64> = None;
+    let mut pi = PiSampler::new();
+    let mut last_pi: Option<u64> = None;
 
     while !stop_requested() && !quit_pressed() {
         if let Some((pkt, arrived)) = rx.take() {
@@ -156,6 +159,10 @@ pub fn run(
             unseen = true;
         }
         let t = now();
+        if last_pi.is_none_or(|last| t.saturating_sub(last) >= SAMPLE_MS) {
+            dash.pi = pi.sample();
+            last_pi = Some(t);
+        }
         let wants = dash.presence.wants_backlight(t);
         if dash.presence.poll_transition(t).is_some() {
             backlight.set(wants);
@@ -215,6 +222,7 @@ mod tests {
             mem: Mem { used: 1, total: 2, pressure: 1.0, swap_used: 0, swap_total: 0, compressed: 0 },
             net: None,
             temp: None,
+            disk: None,
             display_asleep: None,
             procs: vec![],
         }

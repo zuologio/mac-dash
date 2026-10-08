@@ -26,8 +26,19 @@ pub const HISTORY: usize = 240 * SAMPLES_PER_COLUMN;
 /// packets: long enough to look smooth, short enough not to look laggy.
 pub const EASE_MS: u64 = 400;
 
+/// The display's own readings, as opposed to the Mac's. `None` when the
+/// reading is unavailable (no sensor, or no earlier sample to compare with).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PiStats {
+    pub temp_c: Option<f32>,
+    pub cpu_pct: Option<f32>,
+}
+
 pub struct Dashboard {
     pub latest: Option<StatsPacket>,
+    /// The Pi's own load, shown beside the status pill.
+    #[allow(dead_code)] // the pixel renderer's; the text-only tests include this file too
+    pub pi: PiStats,
     pub presence: PresenceTracker,
     pub cpu_history: Ring,
     /// System CPU, one sample per packet, for the pixel chart's teal series.
@@ -45,6 +56,7 @@ impl Dashboard {
     pub fn new() -> Self {
         Self {
             latest: None,
+            pi: PiStats::default(),
             presence: PresenceTracker::new(),
             cpu_history: Ring::new(HISTORY),
             sys_history: Ring::new(HISTORY),
@@ -300,6 +312,7 @@ mod tests {
                 tx_total: 0,
             }),
             temp: None,
+            disk: None,
             display_asleep: None,
             procs: vec![],
         }

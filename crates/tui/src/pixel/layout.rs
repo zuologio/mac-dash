@@ -1,9 +1,11 @@
 //! Where each card goes. Pure geometry, so it is tested without drawing.
 //!
 //! Landscape is the approved mockup at 1024x600: CPU large on the left,
-//! memory above temperature and network on the right, processes along the
-//! bottom. Other sizes scale those proportions. Portrait (a panel installed
-//! with --portrait) stacks the cards in one column.
+//! memory above temperature and network on the right, and along the bottom
+//! a square disk card with the processes filling the rest of the row. Other
+//! sizes scale those proportions. Portrait (a panel installed with
+//! --portrait) stacks the cards in one column, disk beside temperature and
+//! network.
 
 use super::canvas::RectF;
 
@@ -25,6 +27,7 @@ pub struct Layout {
     pub memory: RectF,
     pub temp: RectF,
     pub net: RectF,
+    pub disk: RectF,
     pub procs: RectF,
 }
 
@@ -36,17 +39,19 @@ pub fn layout(w: usize, h: usize) -> Layout {
     let inner_h = h - top - GAP;
 
     if h > w {
-        // Portrait: CPU, then memory, then temperature beside network, then
-        // processes.
+        // Portrait: CPU, then memory, then temperature, network and disk
+        // side by side, then processes.
         let cpu = RectF::new(GAP, top, inner_w, (inner_h * 0.34).round());
         let memory = RectF::new(GAP, cpu.y + cpu.h + GAP, inner_w, 150.0);
-        let half = ((inner_w - GAP) / 2.0).floor();
+        let third = ((inner_w - 2.0 * GAP) / 3.0).floor();
         let small_y = memory.y + memory.h + GAP;
-        let temp = RectF::new(GAP, small_y, half, 150.0);
-        let net = RectF::new(GAP + half + GAP, small_y, inner_w - half - GAP, 150.0);
+        let temp = RectF::new(GAP, small_y, third, 150.0);
+        let net = RectF::new(GAP + third + GAP, small_y, third, 150.0);
+        let disk_x = GAP + 2.0 * (third + GAP);
+        let disk = RectF::new(disk_x, small_y, w - GAP - disk_x, 150.0);
         let py = small_y + 150.0 + GAP;
         let procs = RectF::new(GAP, py, inner_w, h - GAP - py);
-        return Layout { menu, cpu, memory, temp, net, procs };
+        return Layout { menu, cpu, memory, temp, net, disk, procs };
     }
 
     // Landscape, from the 1024x600 mockup: the right column is 352 of 992
@@ -63,9 +68,15 @@ pub fn layout(w: usize, h: usize) -> Layout {
     let half = ((right_w - GAP) / 2.0).floor();
     let temp = RectF::new(rx, small_y, half, small_h);
     let net = RectF::new(rx + half + GAP, small_y, right_w - half - GAP, small_h);
+    // The bottom row: a square disk card, as tall as the row, with the
+    // processes taking the rest of the width. On a small screen the square
+    // gives way so the processes keep most of the row.
     let py = top + top_h + GAP;
-    let procs = RectF::new(GAP, py, inner_w, h - GAP - py);
-    Layout { menu, cpu, memory, temp, net, procs }
+    let row_h = h - GAP - py;
+    let side = row_h.min((inner_w * 0.3).floor());
+    let disk = RectF::new(GAP, py, side, row_h);
+    let procs = RectF::new(GAP + side + GAP, py, inner_w - side - GAP, row_h);
+    Layout { menu, cpu, memory, temp, net, disk, procs }
 }
 
 /// One capsule per core, evenly spaced across `area`. Capsules are 14 px
@@ -92,8 +103,8 @@ pub fn proc_rows(procs: RectF) -> usize {
 mod tests {
     use super::*;
 
-    fn cards(l: &Layout) -> [RectF; 5] {
-        [l.cpu, l.memory, l.temp, l.net, l.procs]
+    fn cards(l: &Layout) -> [RectF; 6] {
+        [l.cpu, l.memory, l.temp, l.net, l.disk, l.procs]
     }
 
     fn inside(r: RectF, w: usize, h: usize) -> bool {
@@ -111,7 +122,16 @@ mod tests {
         assert_eq!(l.memory, RectF::new(656.0, 44.0, 352.0, 150.0));
         assert_eq!(l.temp, RectF::new(656.0, 210.0, 168.0, 150.0));
         assert_eq!(l.net, RectF::new(840.0, 210.0, 168.0, 150.0));
-        assert_eq!(l.procs, RectF::new(16.0, 376.0, 992.0, 208.0));
+        assert_eq!(l.disk, RectF::new(16.0, 376.0, 208.0, 208.0));
+        assert_eq!(l.procs, RectF::new(240.0, 376.0, 768.0, 208.0));
+    }
+
+    #[test]
+    fn the_disk_card_is_square_in_landscape() {
+        for (w, h) in [(1024, 600), (1920, 1080)] {
+            let d = layout(w, h).disk;
+            assert_eq!(d.w, d.h, "{w}x{h}");
+        }
     }
 
     #[test]
