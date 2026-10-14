@@ -113,7 +113,7 @@ them again on later installs to keep them.
 A typical setup for a 7-inch HDMI panel:
 
 ```bash
-./deploy/install-pi.sh pi@192.168.0.148 --hdmi --theme quiet
+./deploy/install-pi.sh g10@192.168.0.148 --hdmi --theme quiet
 ```
 
 Orientation and font choices are kept on later installs unless you pass a new one.
