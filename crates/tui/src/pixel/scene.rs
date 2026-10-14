@@ -263,7 +263,7 @@ impl Scene {
             c.highlight(r, RADIUS, WHITE, 26);
         }
         for (r, title) in [
-            (self.l.cpu, "CPU"),
+            (self.l.cpu, "CPU %"),
             (self.l.memory, "Memory"),
             (self.l.temp, "Temperature"),
             (self.l.net, "Network"),
@@ -758,6 +758,18 @@ fn procs_model(r: RectF, t: &mut Typefaces, p: &StatsPacket) -> Model {
     )
 }
 
+/// Most bars an app's CPU is split into.
+const MAX_BARS: usize = 4;
+/// Space between the bars of one app.
+const BAR_GAP: f32 = 6.0;
+
+/// Fill of each bar for a CPU figure in percent of one core: one bar up to
+/// 100%, then a bar per further core, the last holding the remainder.
+fn bar_segments(cpu: f32) -> Vec<f32> {
+    let n = ((cpu / 100.0).ceil() as usize).clamp(1, MAX_BARS);
+    (0..n).map(|i| ((cpu - i as f32 * 100.0) / 100.0).clamp(0.0, 1.0)).collect()
+}
+
 /// Where an app's name starts, right of its 32 px icon.
 const NAME_X: f32 = 66.0;
 
@@ -793,12 +805,9 @@ fn draw(c: &mut Canvas, t: &mut Typefaces, l: &Layout, m: &Model) {
                 px = t.draw(c, Face::Medium, 12.0, px, 20.0, text, *col, 255) + 8.0;
             }
         }
-        Model::CpuValue { big, finite, user, sys, load } => {
+        Model::CpuValue { big, user, sys, load, .. } => {
             let r = l.cpu;
-            let x = t.draw(c, Face::Display, 64.0, r.x + 18.0, r.y + 96.0, big, LABEL, 255);
-            if *finite {
-                t.draw(c, Face::SemiBold, 28.0, x + 4.0, r.y + 96.0, "%", SECONDARY, 255);
-            }
+            t.draw(c, Face::Display, 64.0, r.x + 18.0, r.y + 96.0, big, LABEL, 255);
             for (dx, cap, val, col) in [
                 (20.0, "User", user, ACCENT),
                 (84.0, "System", sys, SYSTEM),
@@ -911,9 +920,14 @@ fn draw(c: &mut Canvas, t: &mut Typefaces, l: &Layout, m: &Model) {
                 t.draw(c, Face::Regular, 20.0, r.x + NAME_X, y + 33.0, &row.name, LABEL, 255);
                 let cpu = f32::from_bits(row.cpu);
                 if show_bar {
-                    c.rrect(RectF::new(bar_x, y + 21.0, bar_w, 10.0), 5.0, WELL, 255);
-                    let fw = (bar_w * cpu.min(100.0) / 100.0).max(10.0);
-                    c.rrect(RectF::new(bar_x, y + 21.0, fw, 10.0), 5.0, severity(cpu, ACCENT), 255);
+                    let segs = bar_segments(cpu);
+                    let slot = (bar_w - BAR_GAP * (segs.len() - 1) as f32) / segs.len() as f32;
+                    for (k, &frac) in segs.iter().enumerate() {
+                        let x = bar_x + k as f32 * (slot + BAR_GAP);
+                        c.rrect(RectF::new(x, y + 21.0, slot, 10.0), 5.0, WELL, 255);
+                        let fw = (slot * frac).max(10.0).min(slot);
+                        c.rrect(RectF::new(x, y + 21.0, fw, 10.0), 5.0, severity(frac * 100.0, ACCENT), 255);
+                    }
                 }
                 t.draw_right(c, Face::Medium, 22.0, cpu_right, y + 34.0, &row.cpu_s, LABEL, 255);
                 t.draw_right(c, Face::Regular, 15.0, r.x + r.w - 32.0, y + 33.0, &row.mem, SECONDARY, 255);
@@ -1016,6 +1030,16 @@ mod tests {
     use super::*;
     use crate::pixel::canvas::Rgb;
     use macdash_proto::{Cpu, Disk, Mem, Net, Proc, StatsPacket, Temp, PROTOCOL_VERSION};
+
+    #[test]
+    fn bars_split_only_above_one_core() {
+        assert_eq!(bar_segments(0.0), vec![0.0]);
+        assert_eq!(bar_segments(37.0), vec![0.37]);
+        assert_eq!(bar_segments(100.0), vec![1.0]);
+        assert_eq!(bar_segments(125.0), vec![1.0, 0.25]);
+        assert_eq!(bar_segments(340.0), vec![1.0, 1.0, 1.0, 0.4]);
+        assert_eq!(bar_segments(900.0), vec![1.0; MAX_BARS]);
+    }
 
     fn packet(name_len: usize, cores: usize) -> StatsPacket {
         StatsPacket {
