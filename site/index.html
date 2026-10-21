@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macdash — your Mac's vitals on a second screen</title>
+<meta name="description" content="A tiny metrics agent for macOS and a pixel-drawn dashboard for a Raspberry Pi. Open source, with the 3D-printable case.">
+<meta property="og:title" content="macdash">
+<meta property="og:description" content="Your Mac's vitals, live on a second screen.">
+<meta property="og:image" content="assets/images/pixel-dashboard.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="#top">macdash</a>
+  <nav>
+    <a href="#demo">Demo</a>
+    <a href="#features">Features</a>
+    <a href="#build">Build</a>
+    <a href="#files">Files</a>
+    <a href="#run">Run</a>
+    <a class="btn small" href="https://github.com/zuologio/lan-dashboard">GitHub</a>
+  </nav>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <p class="eyebrow">Open source · Rust · Raspberry Pi</p>
+  <h1>Your Mac's vitals,<br>live on a second screen.</h1>
+  <p class="lead">A tiny agent measures your Mac. A Pi with a small display draws it,
+  pixel by pixel, straight into the framebuffer. No desktop, no browser, no setup
+  of IP addresses.</p>
+  <div class="cta">
+    <a class="btn" href="#run">Get started</a>
+    <a class="btn ghost" href="#files">3D files &amp; CAD</a>
+  </div>
+  <img class="shot" src="assets/images/pixel-dashboard.png" width="1024" height="600"
+       alt="The macdash pixel dashboard: CPU history, memory, temperature, network, disk and top apps">
+</section>
+
+<section id="demo">
+  <h2>See it running</h2>
+  <p class="sub">Placeholder clip. Replace <code>site/assets/video/demo.mp4</code> with the real video.</p>
+  <video controls preload="metadata" poster="assets/video/poster.jpg" playsinline>
+    <source src="assets/video/demo.mp4" type="video/mp4">
+    Your browser can't play this video.
+  </video>
+</section>
+
+<section id="features">
+  <h2>What it shows</h2>
+  <div class="grid">
+    <article><h3>CPU</h3><p>Total, per core, user and system, load, and a true 4-minute history.</p></article>
+    <article><h3>Memory</h3><p>Used, pressure, compressed and swap.</p></article>
+    <article><h3>Temperature</h3><p>SoC and battery, plus the Pi's own temperature and load.</p></article>
+    <article><h3>Network</h3><p>Live up and down throughput with a scrolling chart.</p></article>
+    <article><h3>Disk</h3><p>The Mac's data volume: used and free.</p></article>
+    <article><h3>Top apps</h3><p>The three busiest apps, with helper processes counted together.</p></article>
+  </div>
+  <ul class="facts">
+    <li><strong>0.012%</strong><span>of one Mac core</span></li>
+    <li><strong>5 MB</strong><span>of RAM on the Mac</span></li>
+    <li><strong>37 kbps</strong><span>on the network</span></li>
+    <li><strong>700 KB</strong><span>single static Pi binary</span></li>
+  </ul>
+</section>
+
+<section id="how">
+  <h2>How it works</h2>
+  <div class="steps">
+    <article><span>1</span><h3>Discover</h3><p>The Pi announces itself on the LAN every 3 seconds. The Mac finds it on its own, even after a reboot.</p></article>
+    <article><span>2</span><h3>Stream</h3><p>Five times a second the agent sends one small UDP packet. A lost packet is replaced by the next.</p></article>
+    <article><span>3</span><h3>Draw</h3><p>The Pi paints the image itself and writes it to <code>/dev/fb0</code>, redrawing only what changed.</p></article>
+  </div>
+  <p class="note">Prefer a terminal? There is also a text dashboard for SSH and Mac terminals. See the <a href="https://github.com/zuologio/lan-dashboard#readme">README</a>.</p>
+</section>
+
+<section id="gallery">
+  <h2>The build</h2>
+  <p class="sub">Placeholder photos. Replace the files in <code>site/assets/images/</code> (same names) with real pictures.</p>
+  <div class="gallery">
+    <figure><img src="assets/images/build-1.svg" alt="The finished panel" loading="lazy"><figcaption>The finished panel</figcaption></figure>
+    <figure><img src="assets/images/build-2.svg" alt="Inside the case" loading="lazy"><figcaption>Inside the case</figcaption></figure>
+    <figure><img src="assets/images/build-3.svg" alt="Pi Zero W wiring" loading="lazy"><figcaption>Pi Zero W wiring</figcaption></figure>
+    <figure><img src="assets/images/build-4.svg" alt="Panel on the desk" loading="lazy"><figcaption>Panel on the desk</figcaption></figure>
+  </div>
+</section>
+
+<section id="build">
+  <h2>Build your own</h2>
+  <div class="cols">
+    <div>
+      <h3>Parts</h3>
+      <ul class="list">
+        <li>Raspberry Pi Zero W (or Zero 2 W)</li>
+        <li>7-inch 1024×600 HDMI panel</li>
+        <li>microSD card and a 5 V power supply</li>
+        <li>mini-HDMI cable or adapter</li>
+        <li>3D-printed case (files below)</li>
+      </ul>
+      <p class="note">Edit this list to match your exact build. Put purchase links here too.</p>
+    </div>
+    <div>
+      <h3>Steps</h3>
+      <ol class="list">
+        <li>Print the case and stand.</li>
+        <li>Flash Raspberry Pi OS Lite and enable SSH.</li>
+        <li>Install the agent on the Mac and the display on the Pi (see <a href="#run">Run it</a>).</li>
+        <li>Mount the Pi behind the panel and close the case.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="files">
+  <h2>Files &amp; CAD</h2>
+  <p class="sub">Everything you need to print, remix and clone the enclosure.</p>
+  <div class="grid files">
+    <!-- TODO: replace the Onshape href with your public document link -->
+    <a class="card" href="https://cad.onshape.com/documents/REPLACE_WITH_DOCUMENT_ID">
+      <h3>Onshape project</h3>
+      <p>Open the public document and click <em>Copy workspace</em> to clone and edit it.</p>
+      <span class="tag">Link to add</span>
+    </a>
+    <!-- TODO: drop real STL files into site/assets/cad/ and keep these names (or update them) -->
+    <a class="card" href="assets/cad/case-front.stl" download>
+      <h3>case-front.stl</h3>
+      <p>Front bezel that holds the panel.</p>
+      <span class="tag">STL · to add</span>
+    </a>
+    <a class="card" href="assets/cad/case-back.stl" download>
+      <h3>case-back.stl</h3>
+      <p>Back shell with the Pi mount.</p>
+      <span class="tag">STL · to add</span>
+    </a>
+    <a class="card" href="assets/cad/stand.stl" download>
+      <h3>stand.stl</h3>
+      <p>Desk stand.</p>
+      <span class="tag">STL · to add</span>
+    </a>
+    <a class="card" href="https://github.com/zuologio/lan-dashboard">
+      <h3>Source code</h3>
+      <p>Rust workspace: agent, display and wire format. MIT licence.</p>
+      <span class="tag">GitHub</span>
+    </a>
+    <a class="card" href="https://github.com/zuologio/lan-dashboard/blob/main/ANALYSIS.md">
+      <h3>Design notes</h3>
+      <p>Why UDP and beacons, and how the CPU cost fell from 22% to 0.012%.</p>
+      <span class="tag">Docs</span>
+    </a>
+  </div>
+  <p class="note">Printing settings: add layer height, material and supports here once you have them.</p>
+</section>
+
+<section id="run">
+  <h2>Run it</h2>
+  <p class="sub">Both machines on the same LAN.</p>
+  <div class="cols">
+    <div>
+      <h3>Try it locally</h3>
+      <pre><code>cargo run --release -p macdash-agent   # Mac
+cargo run --release -p macdash-tui     # anywhere on the LAN</code></pre>
+      <h3>Install on the Mac</h3>
+      <pre><code>./deploy/install-mac.sh</code></pre>
+    </div>
+    <div>
+      <h3>Install on the Pi</h3>
+      <pre><code>cargo install cross --git https://github.com/cross-rs/cross
+./deploy/build-pi.sh        # --zero2 for a Zero 2 W
+./deploy/install-pi.sh pi@192.168.0.148 --hdmi</code></pre>
+      <p class="note">The dashboard starts at boot with no keyboard, and finds the Mac by itself.
+      All flags are in the <a href="https://github.com/zuologio/lan-dashboard#options">README</a>.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <p>macdash · MIT licence · Pixel dashboard set in <a href="https://rsms.me/inter/">Inter</a> (SIL OFL).</p>
+  <p><a href="https://github.com/zuologio/lan-dashboard">GitHub</a> · <a href="https://github.com/zuologio/lan-dashboard/issues">Issues</a></p>
+</footer>
+
+</body>
+</html>
