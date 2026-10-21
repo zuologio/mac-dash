@@ -14,6 +14,12 @@ your LAN. Plug a small display into the Pi, and leave it running.
 
 </div>
 
+<p align="center">
+  <img src="docs/images/pixel-dashboard.png" alt="The pixel dashboard on a 1024x600 Pi panel: CPU, memory, temperature, network, disk and top apps" width="860">
+  <br>
+  <sub>The pixel dashboard as it appears on the Pi's 1024×600 panel, drawn straight into the framebuffer.</sub>
+</p>
+
 ## What it is
 
 - **`macdash-agent`** runs on the Mac. It reads the system stats and streams them over UDP, five times a second.
@@ -42,7 +48,8 @@ network. The Pi binary is a single 700 KB static file.
 The pixel dashboard is picked automatically when the program runs on the Pi's
 console (`TERM=linux`) and `/dev/fb0` works. Otherwise, it falls back to text.
 
-The text dashboard has less room, so it shows more numbers and fewer pictures:
+The text dashboard (shown below) has less room than the picture above, so it
+trades pictures for more numbers:
 
 ```
  ● macAbre.local  up 1d 16h                                                                               08:12:56   Fri 18 Sep
