@@ -1,6 +1,7 @@
 //! Render one pixel frame of live data to a PNG-ready raw RGB file.
 //!
-//! Run: cargo run -p macdash-tui --example pixel_snapshot -- [W H] [out.rgb]
+//! Run: cargo run -p macdash-tui --example pixel_snapshot -- [W H] [out.rgb] [seconds]
+//! The CPU chart is a 4 minute window; pass 240 to see it full.
 //! View: ffmpeg -y -f rawvideo -pixel_format rgb24 -video_size 1024x600 \
 //!       -i /tmp/pixel.rgb /tmp/pixel.png && open /tmp/pixel.png
 
@@ -34,12 +35,13 @@ fn main() {
     let w = args.first().and_then(|v| v.parse().ok()).unwrap_or(1024);
     let h = args.get(1).and_then(|v| v.parse().ok()).unwrap_or(600);
     let out = args.get(2).cloned().unwrap_or("/tmp/pixel.rgb".into());
+    let secs: u64 = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(6);
 
     let (rx, port) = receiver::spawn(0).expect("bind");
     beacon::spawn(port, Some("pixel-snapshot".into()), Vec::new(), rx.agent.clone());
-    eprintln!("listening on :{port}, collecting for 6s…");
+    eprintln!("listening on :{port}, collecting for {secs}s…");
     let mut dash = state::Dashboard::new();
-    let deadline = Instant::now() + Duration::from_secs(6);
+    let deadline = Instant::now() + Duration::from_secs(secs);
     while Instant::now() < deadline {
         if let Some((p, at)) = rx.take() {
             dash.ingest(p, at);
