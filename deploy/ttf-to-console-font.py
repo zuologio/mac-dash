@@ -48,13 +48,15 @@ DASHBOARD_GLYPHS = (
     + [0x2591, 0x2592, 0x2593]  # shades
     + [0x25B0, 0x25B1, 0x25B2, 0x25BC, 0x25CB, 0x25CC, 0x25CD, 0x25CF, 0x25D0]
     + [0x2022, 0x2026]  # bullet, ellipsis
+    # Rounded corners, last: they are drawn to meet the ─ and │ above.
+    + [0x256D, 0x256E, 0x256F, 0x2570]
 )
 
 # Synthesized rather than rasterized — see the module docstring.
 SYNTHETIC = set(geometry["NEEDED"])
 
 
-def synth(cp, width, height):
+def synth(cp, width, height, lines=None):
     """Geometric glyphs, drawn to tile the cell exactly."""
     rows = [0] * height
     full = (1 << width) - 1
@@ -96,7 +98,7 @@ def synth(cp, width, height):
                 rows[y] = ((1 << hi) | (1 << lo)) & full
         return rows
 
-    return geometry["draw"](cp, width, height)
+    return geometry["draw"](cp, width, height, lines)
 
 
 def rasterize(face, cp, width, height, baseline):
@@ -157,7 +159,12 @@ def build(path, size_px, out, cell=None):
     for cp in DASHBOARD_GLYPHS:
         if cp in mapping:
             continue
-        rows = synth(cp, width, height) if cp in SYNTHETIC else None
+        lines = geometry["line_position"](
+            tuple(glyphs[mapping[c]] if c in mapping else None for c in (0x2500, 0x2502)),
+            width,
+            height,
+        )
+        rows = synth(cp, width, height, lines) if cp in SYNTHETIC else None
         if rows is None:
             rows = rasterize(face, cp, width, height, baseline)
         if rows is None:

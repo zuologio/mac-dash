@@ -52,6 +52,10 @@ pub struct StatsPacket {
     /// unaffected: one failing source must not take the stream down.
     #[serde(default)]
     pub temp: Option<Temp>,
+    /// `None` when the volume cannot be read, or from an agent predating
+    /// this field; the display then shows a dash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk: Option<Disk>,
     /// Whether the Mac's *display* is asleep, as distinct from the Mac.
     ///
     /// A machine on AC power may be configured never to sleep, in which case
@@ -94,6 +98,19 @@ pub struct Mem {
     pub swap_used: u64,
     pub swap_total: u64,
     pub compressed: u64,
+}
+
+/// The volume the user's files live on, in whole decimal gigabytes (10^9
+/// bytes, as Finder counts them). `used` is `total` less what a new file
+/// could actually claim.
+///
+/// Gigabytes, not bytes, because the worst-case packet has only ~40 bytes
+/// to spare: two byte-exact u64s would put it over `MAX_PACKET_BYTES`, and
+/// the card never shows finer than a GB.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Disk {
+    pub used: u32,
+    pub total: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -254,6 +271,11 @@ mod tests {
                 gpu: Some(99.9),
                 battery: Some(99.9),
             }),
+            // 100 TB: past any internal Mac volume.
+            disk: Some(Disk {
+                used: 100_000,
+                total: 100_000,
+            }),
             display_asleep: Some(true),
             procs: (0..TOP_PROC_COUNT)
                 .map(|i| {
@@ -345,6 +367,7 @@ mod tests {
                 gpu: Some(45.1),
                 battery: None,
             }),
+            disk: Some(Disk { used: 312, total: 494 }),
             // Awake: skip_serializing_if means the common case costs nothing.
             display_asleep: Some(false),
             procs: vec![
@@ -357,7 +380,7 @@ mod tests {
         };
         let bytes = serde_json::to_vec(&p).unwrap();
         assert!(
-            bytes.len() < 800,
+            bytes.len() < 850,
             "typical packet unexpectedly large: {}",
             bytes.len()
         );

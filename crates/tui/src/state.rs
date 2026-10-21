@@ -26,10 +26,23 @@ pub const HISTORY: usize = 240 * SAMPLES_PER_COLUMN;
 /// packets: long enough to look smooth, short enough not to look laggy.
 pub const EASE_MS: u64 = 400;
 
+/// The display's own readings, as opposed to the Mac's. `None` when the
+/// reading is unavailable (no sensor, or no earlier sample to compare with).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PiStats {
+    pub temp_c: Option<f32>,
+    pub cpu_pct: Option<f32>,
+}
+
 pub struct Dashboard {
     pub latest: Option<StatsPacket>,
+    /// The Pi's own load, shown beside the status pill.
+    #[allow(dead_code)] // the pixel renderer's; the text-only tests include this file too
+    pub pi: PiStats,
     pub presence: PresenceTracker,
     pub cpu_history: Ring,
+    /// System CPU, one sample per packet, for the pixel chart's teal series.
+    pub sys_history: Ring,
     pub rx_history: Ring,
     pub tx_history: Ring,
     pub mem_history: Ring,
@@ -43,8 +56,10 @@ impl Dashboard {
     pub fn new() -> Self {
         Self {
             latest: None,
+            pi: PiStats::default(),
             presence: PresenceTracker::new(),
             cpu_history: Ring::new(HISTORY),
+            sys_history: Ring::new(HISTORY),
             rx_history: Ring::new(HISTORY),
             tx_history: Ring::new(HISTORY),
             mem_history: Ring::new(HISTORY),
@@ -66,6 +81,11 @@ impl Dashboard {
             self.cpu_history.push(cpu as u64);
         } else if let Some(last) = self.cpu_history.last() {
             self.cpu_history.push(last);
+        }
+        if let Some(sys) = packet.cpu.sys {
+            self.sys_history.push(sys as u64);
+        } else if let Some(last) = self.sys_history.last() {
+            self.sys_history.push(last);
         }
 
         if let Some(net) = &packet.net {
@@ -117,6 +137,16 @@ impl Dashboard {
             .collect()
     }
 
+    /// Whether any eased value is still gliding at `now_ms`: while it is,
+    /// a renderer has something new to show every frame.
+    #[allow(dead_code)] // the pixel renderer's; the text snapshot example includes this file too
+    pub fn easing(&self, now_ms: u64) -> bool {
+        self.cpu_total
+            .iter()
+            .chain(self.cores.iter().flatten())
+            .any(|e| !e.settled(now_ms))
+    }
+
     pub fn presence(&self, now_ms: u64) -> Presence {
         self.presence.presence(now_ms)
     }
@@ -155,6 +185,11 @@ impl Eased {
         self.from = self.value(now_ms);
         self.to = v;
         self.since_ms = now_ms;
+    }
+
+    /// True once the glide has reached its target (or there was none).
+    pub fn settled(&self, now_ms: u64) -> bool {
+        self.from == self.to || now_ms.saturating_sub(self.since_ms) >= EASE_MS
     }
 
     pub fn value(&self, now_ms: u64) -> f32 {
@@ -277,6 +312,7 @@ mod tests {
                 tx_total: 0,
             }),
             temp: None,
+            disk: None,
             display_asleep: None,
             procs: vec![],
         }
@@ -494,6 +530,52 @@ mod tests {
             d.ingest(packet(Some(1.0), Some(i)), i * 200);
         }
         assert_eq!(d.mem_history.tail(usize::MAX).len(), HISTORY);
+    }
+
+    #[test]
+    fn system_cpu_has_its_own_history_and_holds_through_gaps() {
+        let mut d = Dashboard::new();
+        let mut p = packet(Some(30.0), None);
+        p.cpu.sys = Some(7.6);
+        d.ingest(p.clone(), 0);
+        p.cpu.sys = None;
+        d.ingest(p.clone(), 200);
+        p.cpu.sys = Some(12.0);
+        d.ingest(p, 400);
+        assert_eq!(d.sys_history.tail(10), vec![7, 7, 12]);
+        let mut e = Dashboard::new();
+        e.ingest(packet(Some(1.0), None), 0);
+        assert!(e.sys_history.is_empty(), "nothing to carry forward yet");
+    }
+
+    #[test]
+    fn eased_values_settle_after_the_glide() {
+        let mut e = Eased::new(20.0);
+        assert!(e.settled(0), "a new value does not move");
+        e.set(80.0, 1_000);
+        assert!(!e.settled(1_000));
+        assert!(!e.settled(1_000 + EASE_MS - 1));
+        assert!(e.settled(1_000 + EASE_MS));
+        // Retargeting to where it already is does not start a glide.
+        e.set(80.0, 5_000);
+        assert!(e.settled(5_000));
+    }
+
+    #[test]
+    fn the_dashboard_is_easing_while_any_value_moves() {
+        let mut d = Dashboard::new();
+        assert!(!d.easing(0));
+        let mut p = packet(Some(10.0), None);
+        p.cpu.cores = vec![10.0, 20.0];
+        d.ingest(p.clone(), 0);
+        assert!(!d.easing(0), "first samples are not animated");
+        p.cpu.cores = vec![10.0, 60.0];
+        d.ingest(p.clone(), 200);
+        assert!(d.easing(200), "one core is gliding");
+        assert!(d.easing(200 + EASE_MS - 1));
+        assert!(!d.easing(200 + EASE_MS));
+        d.ingest(p, 1_000);
+        assert!(!d.easing(1_000), "unchanged values do not glide");
     }
 
     /// The display flag must reach the presence tracker, or the panel never

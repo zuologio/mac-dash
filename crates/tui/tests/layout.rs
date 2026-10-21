@@ -54,6 +54,7 @@ fn sample_packet() -> StatsPacket {
             gpu: None,
             battery: Some(31.1),
         }),
+        disk: Some(macdash_proto::Disk { used: 312, total: 494 }),
         procs: vec![
             Proc::new(51385, "pgAdmin 4 Helper (Render", 119.8, 707_000_000),
             Proc::new(1104, "Google Chrome", 6.4, 268_000_000),

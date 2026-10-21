@@ -1,0 +1,15 @@
+//! The framebuffer renderer: the dashboard drawn as pixels, for the Pi.
+//!
+//! The text renderer (`ui`) is limited by the Linux console: 16 colours, a
+//! 1-bit font and box-drawing borders. This draws straight to /dev/fb0
+//! instead, so the panel can look like the Mac it sits under.
+
+pub mod canvas;
+pub mod text;
+pub mod layout;
+pub mod framebuffer;
+pub mod console;
+pub mod values;
+pub mod scene;
+pub mod pi_stats;
+pub mod run;

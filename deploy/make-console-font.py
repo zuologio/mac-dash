@@ -34,6 +34,8 @@ PSF2_MAGIC = b"\x72\xb5\x4a\x86"
 
 # What the dashboard needs and no font has.
 NEEDED = list(range(0x2580, 0x2591)) + [0x25B0, 0x25B1, 0x25CB, 0x25CC, 0x25CD, 0x25CF, 0x25D0, 0x2026]
+# Rounded panel corners: drawn to meet the font's own ─ and │.
+NEEDED += [0x256D, 0x256E, 0x256F, 0x2570]
 
 
 class Font:
@@ -52,8 +54,28 @@ class Font:
         return (self.width + 7) // 8
 
 
-def draw(cp, width, height):
-    """Bitmap rows for one codepoint, as ints MSB-first, or None."""
+def line_position(rows, width, height):
+    """The rows a ─ glyph lights and the columns a │ glyph lights.
+
+    Takes the two glyphs' bitmap rows, as (horizontal, vertical); either may be
+    None. Returns ([rows], [cols]), or None if either glyph is missing or blank.
+    """
+    horizontal, vertical = rows
+    if not horizontal or not vertical:
+        return None
+    h_rows = [y for y, r in enumerate(horizontal) if r]
+    v_cols = [x for x in range(width) if any(r >> (width - 1 - x) & 1 for r in vertical)]
+    if not h_rows or not v_cols:
+        return None
+    return h_rows, v_cols
+
+
+def draw(cp, width, height, lines=None):
+    """Bitmap rows for one codepoint, as ints MSB-first, or None.
+
+    `lines` is where the font draws ─ and │, from `line_position`; only the
+    rounded corners use it.
+    """
     rows = [0] * height
     full = (1 << width) - 1
 
@@ -120,6 +142,36 @@ def draw(cp, width, height):
                 ring = inner * inner <= distance <= radius * radius
                 fill = cp == 0x25CF or (cp == 0x25D0 and dx <= 0) or (cp == 0x25CD and x % 2 == 0)
                 if distance <= radius * radius and (fill or (ring and (cp != 0x25CC or (x + y) % 3 != 0))):
+                    rows[y] |= 1 << (width - 1 - x)
+        return rows
+
+    # U+256D..U+2570 — rounded corners ╭ ╮ ╯ ╰: a quarter circle joining a
+    # horizontal arm to a vertical one. The arms sit on the rows and columns
+    # the font's own ─ and │ occupy (`lines`), so a corner meets its edges
+    # without a step; without a font to match, they run through the middle.
+    if 0x256D <= cp <= 0x2570:
+        h_rows, v_cols = lines or ([height // 2], [width // 2])
+        # Which way the arms run: ╭ right+down, ╮ left+down, ╯ left+up, ╰ right+up.
+        right = cp in (0x256D, 0x2570)
+        down = cp in (0x256D, 0x256E)
+        # The arc's outer edge is flush with the line's outer edge, so a
+        # thick line stays thick all the way round.
+        outer_y = min(h_rows) if down else max(h_rows)
+        outer_x = min(v_cols) if right else max(v_cols)
+        thick = max(len(h_rows), len(v_cols))
+        radius = max(thick + 1, min(width, height) // 2 - 1)
+        ax = outer_x + radius if right else outer_x - radius
+        ay = outer_y + radius if down else outer_y - radius
+        for y in range(height):
+            for x in range(width):
+                past_x = (x >= ax) if right else (x <= ax)
+                past_y = (y >= ay) if down else (y <= ay)
+                on_h_arm = y in h_rows and past_x
+                on_v_arm = x in v_cols and past_y
+                dx, dy = x - ax, y - ay
+                d = (dx * dx + dy * dy) ** 0.5
+                on_arc = not past_x and not past_y and radius - thick + 0.4 < d < radius + 0.6
+                if on_h_arm or on_v_arm or on_arc:
                     rows[y] |= 1 << (width - 1 - x)
         return rows
 
@@ -264,9 +316,21 @@ def build(src, out):
     freed = set(free)
     font.mapping = {cp: i for cp, i in font.mapping.items() if i not in freed}
 
+    def unpack(cp):
+        if cp not in font.mapping:
+            return None
+        glyph = font.glyphs[font.mapping[cp]]
+        rows = []
+        for y in range(min(font.height, font.charsize // max(1, font.stride))):
+            row = int.from_bytes(glyph[y * font.stride:(y + 1) * font.stride], "big")
+            rows.append(row >> (font.stride * 8 - font.width))
+        return rows
+
+    lines = line_position((unpack(0x2500), unpack(0x2502)), font.width, font.height)
+
     added = []
     for cp in NEEDED:
-        bits = draw(cp, font.width, font.height)
+        bits = draw(cp, font.width, font.height, lines)
         if bits is None:
             continue
         if cp in font.mapping:

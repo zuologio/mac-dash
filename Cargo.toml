@@ -18,3 +18,8 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The Pi dashboard draws pixels on an ARMv6 core: speed beats size there
+# (75 ms -> 52 ms a frame). The agent keeps the small build.
+[profile.release.package.macdash-tui]
+opt-level = 3

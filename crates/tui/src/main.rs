@@ -10,6 +10,7 @@ mod beacon;
 mod brightness;
 mod console_font;
 mod hdmi;
+mod pixel;
 mod receiver;
 mod repaint;
 mod state;
@@ -59,6 +60,8 @@ struct Args {
     macs: Vec<SocketAddr>,
     /// Index into `ui::theme::THEMES`.
     theme: usize,
+    /// Use the text renderer even on the Linux console.
+    text: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -71,6 +74,7 @@ fn parse_args() -> Result<Args, String> {
         font: None,
         macs: Vec::new(),
         theme: 0,
+        text: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -83,6 +87,7 @@ fn parse_args() -> Result<Args, String> {
             "--backlight" => args.backlight = Some(it.next().ok_or("--backlight needs a path")?),
             "--hdmi" => args.hdmi = true,
             "--no-beacon" => args.no_beacon = true,
+            "--text" => args.text = true,
             "--font" => args.font = Some(it.next().ok_or("--font needs a path")?),
             "--theme" => {
                 let v = it.next().ok_or("--theme needs a name")?;
@@ -144,6 +149,7 @@ OPTIONS:
     --theme <name>      Colour scheme: {} (default classic)
     --no-beacon         Do not announce; only useful when the agent was
                         started with a matching --target
+    --text              Draw with the text console even where pixels work
     -h, --help          Show this help
 
 KEYS:
@@ -157,6 +163,24 @@ KEYS:
 fn now_ms() -> u64 {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// The pixel renderer, started, or None for the text renderer: when --text
+/// was given, when this is not the Linux console (SSH, a Mac terminal), or
+/// when any part of pixel startup fails. A failure is logged and the text
+/// dashboard runs instead, so the panel is never left blank.
+fn pixel_session(text: bool) -> Option<pixel::run::PixelSession> {
+    if text || std::env::var("TERM").as_deref() != Ok("linux") {
+        return None;
+    }
+    use pixel::framebuffer::{FB_PATH, ROTATE_PATH};
+    match pixel::run::PixelSession::start(FB_PATH, ROTATE_PATH, "/dev/tty") {
+        Ok(session) => Some(session),
+        Err(e) => {
+            eprintln!("macdash: pixels unavailable ({e}); using the text console");
+            None
+        }
+    }
 }
 
 fn main() {
@@ -194,6 +218,7 @@ fn main() {
     };
 
     ui::theme::select(args.theme);
+    ui::theme::set_console(std::env::var("TERM").as_deref() == Ok("linux"));
 
     if !args.no_beacon {
         beacon::spawn(port, args.name.clone(), args.macs.clone(), rx.agent.clone());
@@ -212,7 +237,16 @@ fn main() {
         None
     };
 
-    let result = run(rx, &mut backlight, &mut hdmi, args.font.as_deref());
+    let result = match pixel_session(args.text) {
+        Some(session) => {
+            eprintln!("macdash: drawing to {}", pixel::framebuffer::FB_PATH);
+            // Rewrapped without the errno, so it never gets the text
+            // renderer's "stdout is not a terminal" advice below.
+            pixel::run::run(session, rx, &mut backlight, &mut hdmi, now_ms)
+                .map_err(|e| io::Error::other(format!("pixel dashboard: {e}")))
+        }
+        None => run(rx, &mut backlight, &mut hdmi, args.font.as_deref()),
+    };
     // Restore even when terminal setup or cleanup fails. systemd also does
     // this on termination, where Rust destructors may not run.
     backlight.set(true);

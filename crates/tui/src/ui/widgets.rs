@@ -3,15 +3,24 @@
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Row, Sparkline, Table};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Row, Sparkline, Table};
 use ratatui::Frame;
 
 use super::{big_digits, format, theme};
 use crate::state::{Dashboard, SAMPLES_PER_COLUMN};
 
+/// A bordered box, with rounded corners when the theme asks for them.
+pub(super) fn frame<'a>() -> Block<'a> {
+    let block = Block::default().borders(Borders::ALL);
+    if theme::rounded() {
+        block.border_type(BorderType::Rounded)
+    } else {
+        block
+    }
+}
+
 fn panel(title: &str, dimmed: bool) -> Block<'_> {
-    Block::default()
-        .borders(Borders::ALL)
+    frame()
         .border_style(Style::default().fg(theme::border()))
         .title(Span::styled(
             format!(" {title} "),
@@ -150,8 +159,7 @@ fn core_boxes(f: &mut Frame, area: Rect, cores: &[Option<f32>], count: usize, di
         );
         let value = cores.get(i).copied().flatten().map(|v| v.clamp(0.0, 100.0));
         let style = fg(dimmed, value.map(theme::scale).unwrap_or(theme::dim()));
-        let block = Block::default()
-            .borders(Borders::ALL)
+        let block = frame()
             .border_style(fg(dimmed, theme::dim()))
             .title(Line::from((i + 1).to_string()).alignment(Alignment::Center));
         let inner = block.inner(rect);

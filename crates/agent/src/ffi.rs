@@ -76,6 +76,8 @@ pub struct mach_timebase_info_data_t {
 // --- libproc: process enumeration ----------------------------------------
 pub const PROC_ALL_PIDS: u32 = 1;
 pub const PROC_PIDTASKINFO: c_int = 4;
+/// 4 * MAXPATHLEN, from <libproc.h>.
+pub const PROC_PIDPATHINFO_MAXSIZE: usize = 4096;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
@@ -111,6 +113,7 @@ extern "C" {
         buffersize: c_int,
     ) -> c_int;
     pub fn proc_name(pid: c_int, buffer: *mut c_void, buffersize: u32) -> c_int;
+    pub fn proc_pidpath(pid: c_int, buffer: *mut c_void, buffersize: u32) -> c_int;
 }
 
 extern "C" {

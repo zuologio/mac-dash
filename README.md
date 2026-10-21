@@ -4,8 +4,8 @@
 
 **Your Mac's vitals, live on a second screen.**
 
-A tiny metrics agent for macOS and a terminal dashboard for a Raspberry Pi,
-talking over your LAN. Plug a small display into the Pi and leave it running.
+A tiny metrics agent for macOS and a dashboard for a Raspberry Pi, talking over
+your LAN. Plug a small display into the Pi, and leave it running.
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-b7410e.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/mac-Apple%20Silicon-black.svg)](#)
@@ -13,6 +13,36 @@ talking over your LAN. Plug a small display into the Pi and leave it running.
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
+
+## What it is
+
+- **`macdash-agent`** runs on the Mac. It reads the system stats and streams them over UDP, five times a second.
+- **`macdash-tui`** runs on the Pi (or anywhere else) and draws them.
+
+The two find each other automatically: no IP addresses, no pairing, no sudo.
+
+**What you see:** CPU (total, per core, user/system, load) · memory (used,
+pressure, compressed, swap) · SoC and battery temperature · network throughput ·
+disk usage · your top apps, with helper processes counted together · the Mac's
+clock · the Pi's own temperature and load.
+
+**What it costs:** about 0.012% of one Mac core, 5 MB of RAM and 37 kbps of
+network. The Pi binary is a single 700 KB static file.
+
+### Two ways to draw it
+
+| | Pixel dashboard (main) | Text dashboard (TUI) |
+|---|---|---|
+| Where | The Pi's own screen | SSH, a Mac terminal, or `--text` |
+| How | Draws every pixel straight into the framebuffer (`/dev/fb0`): rounded cards, smooth charts, the Inter font | Terminal UI built with [ratatui](https://ratatui.rs) |
+| Look | macOS-style, laid out for a 1024×600 panel | Denser, themeable |
+| Top apps | 3, large | 8 |
+| Themes | One fixed look | 8 (press `t`) |
+
+The pixel dashboard is picked automatically when the program runs on the Pi's
+console (`TERM=linux`) and `/dev/fb0` works. Otherwise, it falls back to text.
+
+The text dashboard has less room, so it shows more numbers and fewer pictures:
 
 ```
  ● macAbre.local  up 1d 16h                                                                               08:12:56   Fri 18 Sep
@@ -41,41 +71,33 @@ talking over your LAN. Plug a small display into the Pi and leave it running.
  LIVE en0 26 pkts  q quit
 ```
 
-**Shows:** CPU (total, per core, user/system, load) · memory (used, pressure,
-compressed, swap) · SoC and battery temperature · network throughput · top 8
-processes · the Mac's clock.
-
-**Costs:** about 0.012% of one Mac core, 5 MB of RAM and 37 kbps on the network.
-No sudo needed. The Pi binary is a single 700 KB static file.
-
 ---
 
-## Quick start
+## Run it
 
-### 1. Try it without installing
+Both machines must be on the same LAN.
 
-Both machines need to be on the same LAN. Run each half in a terminal:
+### Try it without installing
 
 ```bash
 cargo run --release -p macdash-agent      # on the Mac
-cargo run --release -p macdash-tui        # on any machine on the LAN, even the Mac itself
+cargo run --release -p macdash-tui        # in another terminal, or any machine on the LAN
 ```
 
-The two halves find each other on their own, with no IP addresses to configure.
-Press `q` to quit.
+Press `q` to quit. In a normal terminal, this shows the text dashboard.
 
-### 2. Install the agent on the Mac
+### Install on the Mac
 
 ```bash
 ./deploy/install-mac.sh
 ```
 
-This builds the agent and installs it as a launchd agent, so it starts at login
-and keeps running in the background.
+Builds the agent and installs it as a launchd agent: it starts at login and
+keeps running.
 
-### 3. Install the dashboard on the Pi
+### Install on the Pi
 
-Building for the Pi needs Docker on the Mac and the `cross` tool:
+Building for the Pi needs Docker and the `cross` tool on the Mac:
 
 ```bash
 cargo install cross --git https://github.com/cross-rs/cross
@@ -83,159 +105,56 @@ cargo install cross --git https://github.com/cross-rs/cross
 ./deploy/install-pi.sh pi@192.168.0.148
 ```
 
-The dashboard now starts on the Pi's screen at boot, with no keyboard needed,
-and finds the Mac by itself. Run the same two commands again to update it.
-
-## Install options
-
-Pass any of these to `install-pi.sh`. They are saved in the service, so pass
-them again on later installs to keep them.
-
-| Option | What it does |
-|---|---|
-| `--hdmi` | Turn the HDMI screen off while the Mac's display sleeps |
-| `--backlight <path>` | Same, for panels with a Linux backlight device, e.g. `/sys/class/backlight/rpi_backlight` |
-| `--theme <name>` | Colour scheme (see [Themes](#themes)) |
-| `--portrait` | Panel turned 90° clockwise, connectors at the bottom |
-| `--landscape-flipped` | Panel upside down, connectors at the bottom left |
-| `--landscape` | Back to normal orientation |
-| `--font <name>` | Console font. The default `Lat15-Terminus16` fits a 1024×600 panel; use `Lat15-Terminus32x16` for larger text on a 1080p screen |
-| `--ttf <file>` `--ttf-size <px>` | Turn your own `.ttf`/`.otf` into the console font (needs `freetype-py`) |
-| `--mac <ip>` | Also announce directly to this Mac. Use it if the screen stays on `WAITING` (some Wi-Fi routers block multicast). The installer fills this in automatically |
-| `--zero2` | Install the Pi Zero 2 W build |
+The pixel dashboard now starts on the Pi's screen at boot, with no keyboard, and
+finds the Mac by itself. Run the same two commands again to update.
 
 A typical setup for a 7-inch HDMI panel:
 
 ```bash
-./deploy/install-pi.sh pi@192.168.0.148 --hdmi --theme quiet
+./deploy/install-pi.sh pi@192.168.0.148 --hdmi
 ```
 
-Orientation and font choices are kept on later installs unless you pass a new one.
+### Watch over SSH too
 
-## Themes
-
-| Theme | Normal | Warning | Critical |
-|---|---|---|---|
-| `classic` (default) | blue (`#5293E1`) | yellow | red |
-| `traffic` | green | amber | red |
-| `quiet` | plain white, so colour only appears when something is wrong | amber | red |
-| `thermal` | teal | warm amber | red-orange |
-| `phosphor` | dark amber | bright amber | red-orange |
-| `sapphire` | blue (`#5293E1`) | amber | soft red, with violet upload |
-| `grey` | light grey | white | red, the only colour on screen |
-
-Press **`t`** while the dashboard is running to cycle through them, then set your
-favourite with `--theme`. On the Pi's console, all themes except `classic`
-and `grey` show their exact colours; `classic` keeps the console's own yellow
-and red, and `grey` its own greys and red.
-
-To try one locally:
-
-```bash
-cargo run --release -p macdash-tui                     # classic
-cargo run --release -p macdash-tui -- --theme traffic
-cargo run --release -p macdash-tui -- --theme quiet
-cargo run --release -p macdash-tui -- --theme thermal
-cargo run --release -p macdash-tui -- --theme phosphor
-cargo run --release -p macdash-tui -- --theme sapphire
-cargo run --release -p macdash-tui -- --theme grey
-```
-
-To make one the Pi's default, install with it (add your other options, such
-as `--hdmi`, since they are not kept between installs):
-
-```bash
-./deploy/install-pi.sh pi@192.168.0.148                     # classic
-./deploy/install-pi.sh pi@192.168.0.148 --theme traffic
-./deploy/install-pi.sh pi@192.168.0.148 --theme quiet
-./deploy/install-pi.sh pi@192.168.0.148 --theme thermal
-./deploy/install-pi.sh pi@192.168.0.148 --theme phosphor
-./deploy/install-pi.sh pi@192.168.0.148 --theme sapphire
-./deploy/install-pi.sh pi@192.168.0.148 --theme grey
-```
-
-## Using it
-
-**Keys:** `t` cycles themes · `q`, `Esc` or `Ctrl-C` quits.
-
-**Status line** at the bottom left:
-
-| Status | Meaning | Screen |
-|---|---|---|
-| `LIVE` | data is arriving | normal |
-| `DISPLAY OFF` | the Mac's display is asleep | screen off (with `--hdmi`/`--backlight`), values current |
-| `STALE` | no data for 1–10 s | values dimmed |
-| `ASLEEP` | no data for over 10 s | screen off, values dimmed |
-| `WAITING` | no Mac found yet | see [Troubleshooting](#troubleshooting) |
-
-**Watch over SSH** alongside the panel. The agent streams to every display it
-finds, so both stay live:
+The agent streams to every display it finds, so the panel and a terminal can run
+together:
 
 ```bash
 ssh pi@192.168.0.148
-macdash-tui --port 0      # --port 0 because the service already uses port 9999
+macdash-tui --port 0      # port 0: the service already uses 9999
 ```
 
-**Several screens** work with no extra setup: install on another Pi.
+More screens work with no setup: install on another Pi.
 
-**Reading the numbers:** the big CPU figure is the whole machine (0–100%).
-Process percentages count one core as 100%, so they can add up to more than
-the big figure. Network rates are in bytes per second (`K` = 1024 bytes).
+---
 
-## Troubleshooting
+## Options
 
-**The screen stays on `WAITING`.** Make sure the agent is running on the Mac
-(`launchctl list | grep macdash`). If it is, your router is probably blocking
-multicast. Reinstall with `--mac <your Mac's IP>`, or start the agent with
-`--target <pi-ip>`.
+### `install-pi.sh <user@host> [options]`
 
-**The screen is blank, with no dashboard and no login prompt.** This means an
-install failed partway. To give the console back to a login prompt and try the
-dashboard again:
+Options are saved in the service. Orientation and font are kept on later
+installs unless you pass a new one; pass everything else again.
 
-```bash
-./deploy/fix-pi-console.sh pi@192.168.0.148
-```
+| Option | What it does |
+|---|---|
+| `--hdmi` | Turn the HDMI screen off while the Mac's display sleeps |
+| `--backlight <path>` | Same, for panels with a Linux backlight, e.g. `/sys/class/backlight/rpi_backlight` |
+| `--portrait` | Panel turned 90° clockwise, connectors at the bottom |
+| `--landscape-flipped` | Panel upside down |
+| `--landscape` | Back to normal orientation |
+| `--font <name>` | Console font. Default `Lat15-Terminus16` (1024×600); `Lat15-Terminus32x16` for 1080p |
+| `--ttf <file>` `--ttf-size <px>` `--ttf-cell <WxH>` | Use your own `.ttf`/`.otf` as the console font (needs `freetype-py`). `--ttf-cell 8x16` keeps the full 128×37 grid |
+| `--mac <ip>` | Also announce directly to this Mac (the installer fills it in) |
+| `--theme <name>` | Colour scheme of the text dashboard |
+| `--text` | Use the text dashboard on the Pi's screen instead of the pixel one |
+| `--zero2` | Install the Pi Zero 2 W build |
 
-**Bars and graphs show as `#`.** The console font failed to load. Reinstall
-without `--font` to rebuild the default one.
-
-**The layout is cramped or panels are missing.** The font is too large for the
-panel. Reinstall with `--font Lat15-Terminus16`.
-
-**Restart or inspect the service on the Pi:**
-
-```bash
-sudo systemctl restart macdash
-systemctl status macdash macdash.timer
-journalctl -u macdash -b
-```
-
-**Temperature is missing.** It uses a private macOS API that a future macOS
-might break. Every other metric keeps working.
-`macdash-agent --list-sensors` shows the raw sensor data.
-
-**Check without a terminal:** `cargo run -p macdash-tui --example snapshot`
-renders one frame as plain text, and `macdash-agent --once` prints one snapshot
-as JSON.
-
-## Reference
-
-**`macdash-agent`** (Mac)
+### `macdash-tui`
 
 | Flag | |
 |---|---|
-| `--target <ip[:port]>` | Also stream to a fixed address (repeatable) |
-| `--interval <ms>` | Sampling interval (default 200) |
-| `--once` | Print one snapshot as JSON and exit |
-| `--list-sensors` | Dump raw thermal sensors |
-| `-v` | Log discovery and send counts |
-
-**`macdash-tui`** (display)
-
-| Flag | |
-|---|---|
-| `--theme <name>` | `classic`, `traffic`, `quiet`, `thermal`, `phosphor`, `sapphire`, `grey` |
+| `--text` | Force the text dashboard, even on the Pi's console |
+| `--theme <name>` | Text theme (see below) |
 | `--hdmi` | HDMI off while the Mac's display sleeps (VC4/KMS, `fb0`) |
 | `--backlight <path>` | Backlight to darken while the Mac sleeps |
 | `--font <path>` | Console font to load before drawing |
@@ -244,9 +163,104 @@ as JSON.
 | `--name <label>` | Name shown in the agent's logs |
 | `--no-beacon` | Don't announce (use with the agent's `--target`) |
 
-**Network:** 9998/udp for discovery (multicast `239.255.42.99`, sent by the Pi
-every 3 s) and 9999/udp for stats (unicast, sent by the Mac every 200 ms). Both
+### `macdash-agent`
+
+| Flag | |
+|---|---|
+| `--target <ip[:port]>` | Also stream to a fixed address (repeatable) |
+| `--interval <ms>` | Sampling interval (default 200, minimum 50) |
+| `--once` | Print one snapshot as JSON and exit |
+| `--list-sensors` | Dump raw thermal sensors |
+| `-v` | Log discovery and send counts |
+
+### Text themes
+
+Themes apply to the text dashboard only. Press **`t`** to cycle, then set a
+favourite with `--theme`.
+
+| Theme | Normal | Warning | Critical |
+|---|---|---|---|
+| `classic` (default) | blue | yellow | red |
+| `traffic` | green | amber | red |
+| `quiet` | plain white: colour only when something is wrong | amber | red |
+| `thermal` | teal | warm amber | red-orange |
+| `phosphor` | dark amber | bright amber | red-orange |
+| `sapphire` | blue | amber | soft red |
+| `grey` | light grey | white | red |
+| `graphite` | green | orange | red, on a macOS dark-mode grey with rounded panels |
+
+---
+
+## Using it
+
+**Status** (bottom left):
+
+| Status | Meaning | Screen |
+|---|---|---|
+| `LIVE` | data is arriving | normal |
+| `DISPLAY OFF` | the Mac's display is asleep | off with `--hdmi`/`--backlight`, values current |
+| `STALE` | no data for 1–10 s | values dimmed |
+| `ASLEEP` | no data for over 10 s | off, values dimmed |
+| `WAITING` | no Mac found yet | see Troubleshooting |
+
+**Keys:** `t` cycles themes (text only) · `q`, `Esc` or `Ctrl-C` quits.
+
+**Reading the numbers:** the big CPU figure is the whole machine (0–100%). App
+percentages count one core as 100%, so they can add up to more than the big
+figure. Network rates are bytes per second (`K` = 1024).
+
+## How it works
+
+**Finding each other.** Every 3 s the display sends an "I'm here" message to the
+multicast group `239.255.42.99:9998`. The agent listens and sends stats back to
+wherever it came from. A Pi that reboots or changes address is found again in
+seconds.
+
+**Sending the numbers.** Five times a second the agent reads the stats straight
+from macOS and sends them as one JSON snapshot in a single UDP packet (under
+1400 bytes) to port 9999. No connection to keep alive: a lost packet is replaced
+by the next one 200 ms later.
+
+**Drawing.** On the Pi there is no desktop, browser or GPU toolkit. The display
+draws the whole image itself and writes it into the framebuffer, redrawing only
+the parts that changed, which keeps a Pi Zero fast. Over SSH or in a Mac
+terminal, the same data goes through the text renderer.
+
+**Network:** 9998/udp (discovery, multicast) and 9999/udp (stats, unicast). Both
 stay on the local network.
+
+## Troubleshooting
+
+**The screen stays on `WAITING`.** Check the agent runs
+(`launchctl list | grep macdash`). If it does, your router probably blocks
+multicast: reinstall with `--mac <your Mac's IP>`, or start the agent with
+`--target <pi-ip>`.
+
+**The screen is blank, with no dashboard and no login prompt.** An install failed
+partway. Give the console back and try again:
+
+```bash
+./deploy/fix-pi-console.sh pi@192.168.0.148
+```
+
+**Bars show as `#` or panels are missing (text dashboard).** The console font
+failed to load or is too big. Reinstall without `--font`, or with
+`--font Lat15-Terminus16`.
+
+**Restart or inspect the Pi service:**
+
+```bash
+sudo systemctl restart macdash
+systemctl status macdash macdash.timer
+journalctl -u macdash -b
+```
+
+**Temperature is missing.** It uses a private macOS API that a future macOS might
+break; everything else keeps working. `macdash-agent --list-sensors` shows the
+raw data.
+
+**Check without a screen:** `macdash-agent --once` prints one snapshot as JSON,
+and `cargo run -p macdash-tui --example snapshot` renders one text frame.
 
 ## Development
 
@@ -255,10 +269,15 @@ cargo test --workspace
 cargo run --release -p macdash-agent --example bench     # where the agent's time goes
 ```
 
-The code is three crates: `proto` (wire format, shared by both sides), `agent`
-(macOS) and `tui` (the display). [ANALYSIS.md](ANALYSIS.md) covers the design:
-why UDP and beacons, how the CPU cost went from 22% to 0.012%, sleep detection
-and the edge cases.
+Three crates: `proto` (wire format), `agent` (macOS) and `tui` (the display, both
+renderers). [ANALYSIS.md](ANALYSIS.md) covers the design: why UDP and beacons,
+how the CPU cost went from 22% to 0.012%, and sleep detection.
+
+## Credits
+
+The pixel dashboard uses [Inter](https://rsms.me/inter/) by Rasmus Andersson,
+under the SIL Open Font License (`crates/tui/assets/fonts/LICENSE-Inter.txt`),
+embedded in the binary.
 
 ## License
 

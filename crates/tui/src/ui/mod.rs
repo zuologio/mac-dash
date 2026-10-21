@@ -13,7 +13,7 @@ use macdash_proto::Presence;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
 use crate::state::Dashboard;
@@ -27,6 +27,9 @@ const SHORT: u16 = 20;
 pub fn render(f: &mut Frame, dash: &Dashboard, now_ms: u64) {
     let presence = dash.presence(now_ms);
     let area = f.area();
+    if let Some(bg) = theme::bg() {
+        f.render_widget(Block::default().style(Style::default().bg(bg)), area);
+    }
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -129,11 +132,7 @@ fn render_waiting(f: &mut Frame, area: Rect) {
         )),
     ];
     f.render_widget(
-        Paragraph::new(text).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme::border())),
-        ),
+        Paragraph::new(text).block(widgets::frame().border_style(Style::default().fg(theme::border()))),
         area,
     );
 }

@@ -17,8 +17,8 @@ use macdash_proto::{
 };
 
 use collect::{
-    cpu::CpuCollector, display::DisplayCollector, mem::MemCollector, net::NetCollector,
-    procs::ProcCollector, temp::TempCollector,
+    cpu::CpuCollector, disk::DiskCollector, display::DisplayCollector, mem::MemCollector,
+    net::NetCollector, procs::ProcCollector, temp::TempCollector,
 };
 use discovery::TargetTable;
 use sender::Sender;
@@ -121,6 +121,7 @@ struct Collectors {
     mem: MemCollector,
     net: NetCollector,
     temp: TempCollector,
+    disk: DiskCollector,
     procs: ProcCollector,
     display: DisplayCollector,
     host: String,
@@ -135,6 +136,7 @@ impl Collectors {
             mem: MemCollector::new(),
             net: NetCollector::new(),
             temp: TempCollector::new(),
+            disk: DiskCollector::new(),
             procs: ProcCollector::new(),
             display: DisplayCollector::new(),
             host: ffi::hostname(),
@@ -160,6 +162,7 @@ impl Collectors {
             mem: self.mem.sample(),
             net: self.net.sample(target, ts),
             temp: self.temp.sample(ts),
+            disk: self.disk.sample(),
             display_asleep: self.display.sample(ts),
             procs: self.cached_procs.clone(),
         }

@@ -5,6 +5,7 @@
 
 pub mod cpu;
 pub mod delta;
+pub mod disk;
 pub mod display;
 pub mod mem;
 pub mod net;
