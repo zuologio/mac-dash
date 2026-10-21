@@ -7,10 +7,11 @@
 <meta name="description" content="A tiny metrics agent for macOS and a pixel-drawn dashboard for a Raspberry Pi. Open source, with the 3D-printable case.">
 <meta property="og:title" content="macdash">
 <meta property="og:description" content="Your Mac's vitals, live on a second screen.">
-<meta property="og:image" content="assets/images/pixel-dashboard.png">
+<meta property="og:image" content="assets/images/photo-hero.jpg">
 <link rel="icon" href="favicon.svg?v=2" type="image/svg+xml">
 <link rel="icon" href="favicon.ico?v=2" sizes="32x32">
 <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2">
+<script>document.documentElement.classList.add("js")</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,7 +24,7 @@
     <a href="#build">Build</a>
     <a href="#files">Files</a>
     <a href="#run">Run</a>
-    <a class="btn small" href="https://github.com/zuologio/lan-dashboard">GitHub</a>
+    <a class="btn small" href="https://github.com/zuologio/mac-dash">GitHub</a>
   </nav>
 </header>
 
@@ -43,16 +44,24 @@
        alt="The macdash pixel dashboard: CPU history, memory, temperature, network, disk and top apps">
 </section>
 
-<section id="demo">
+<section class="real reveal">
+  <img src="assets/images/photo-hero.jpg" width="2000" height="1128" alt="The macdash panel on a desk, showing live CPU, memory and network">
+  <div class="real-text">
+    <h2>On your desk,<br>not in a window.</h2>
+    <p>A 7-inch panel in a printed case, always on, always current. Glance over, know your Mac.</p>
+  </div>
+</section>
+
+<section id="demo" class="reveal">
   <h2>See it running</h2>
-  <p class="sub">Placeholder clip. Replace <code>site/assets/video/demo.mp4</code> with the real video.</p>
+  <p class="sub">The real panel, filmed on the desk. Turn the sound on.</p>
   <video controls preload="metadata" poster="assets/video/poster.jpg" playsinline>
     <source src="assets/video/demo.mp4" type="video/mp4">
     Your browser can't play this video.
   </video>
 </section>
 
-<section id="features">
+<section id="features" class="reveal">
   <h2>What it shows</h2>
   <div class="grid">
     <article><h3>CPU</h3><p>Total, per core, user and system, load, and a true 4-minute history.</p></article>
@@ -70,28 +79,28 @@
   </ul>
 </section>
 
-<section id="how">
+<section id="how" class="reveal">
   <h2>How it works</h2>
   <div class="steps">
     <article><span>1</span><h3>Discover</h3><p>The Pi announces itself on the LAN every 3 seconds. The Mac finds it on its own, even after a reboot.</p></article>
     <article><span>2</span><h3>Stream</h3><p>Five times a second the agent sends one small UDP packet. A lost packet is replaced by the next.</p></article>
     <article><span>3</span><h3>Draw</h3><p>The Pi paints the image itself and writes it to <code>/dev/fb0</code>, redrawing only what changed.</p></article>
   </div>
-  <p class="note">Prefer a terminal? There is also a text dashboard for SSH and Mac terminals. See the <a href="https://github.com/zuologio/lan-dashboard#readme">README</a>.</p>
+  <p class="note">Prefer a terminal? There is also a text dashboard for SSH and Mac terminals. See the <a href="https://github.com/zuologio/mac-dash#readme">README</a>.</p>
 </section>
 
-<section id="gallery">
+<section id="gallery" class="reveal">
   <h2>The build</h2>
-  <p class="sub">Placeholder photos. Replace the files in <code>site/assets/images/</code> (same names) with real pictures.</p>
+  <p class="sub">Click a photo to enlarge it.</p>
   <div class="gallery">
-    <figure><img src="assets/images/build-1.svg" alt="The finished panel" loading="lazy"><figcaption>The finished panel</figcaption></figure>
-    <figure><img src="assets/images/build-2.svg" alt="Inside the case" loading="lazy"><figcaption>Inside the case</figcaption></figure>
-    <figure><img src="assets/images/build-3.svg" alt="Pi Zero W wiring" loading="lazy"><figcaption>Pi Zero W wiring</figcaption></figure>
-    <figure><img src="assets/images/build-4.svg" alt="Panel on the desk" loading="lazy"><figcaption>Panel on the desk</figcaption></figure>
+    <figure><img src="assets/images/closeup.jpg" alt="Close-up of the dashboard on the panel" loading="lazy"><figcaption>The dashboard, up close</figcaption></figure>
+    <figure><video src="assets/video/loop.mp4" autoplay muted loop playsinline preload="metadata" aria-label="The panel running live on a desk"></video><figcaption>Always on</figcaption></figure>
+    <figure><img src="assets/images/desk.jpg" alt="The panel on a desk next to a monitor" loading="lazy"><figcaption>Next to the monitor</figcaption></figure>
+    <figure><img src="assets/images/side.jpg" alt="The panel from the side, on its stand" loading="lazy"><figcaption>The printed case and stand</figcaption></figure>
   </div>
 </section>
 
-<section id="build">
+<section id="build" class="reveal">
   <h2>Build your own</h2>
   <div class="cols">
     <div>
@@ -117,38 +126,46 @@
   </div>
 </section>
 
-<section id="files">
+<section id="files" class="reveal">
   <h2>Files &amp; CAD</h2>
-  <p class="sub">Everything you need to print, remix and clone the enclosure.</p>
+  <p class="sub">Print it, remix it, or clone the Onshape documents and change anything.</p>
+
+  <div class="viewer-wrap">
+    <div id="viewer" aria-label="3D preview of the case. Drag to rotate."><span class="viewer-hint">Loading 3D preview…</span></div>
+    <div class="viewer-tabs" role="tablist">
+      <button class="tab on" data-stl="assets/cad/frame-front.stl">Frame front</button>
+      <button class="tab" data-stl="assets/cad/frame-back.stl">Frame back</button>
+    </div>
+    <p class="note">Drag to rotate. Needs WebGL.</p>
+  </div>
+
   <div class="grid files">
-    <!-- TODO: replace the Onshape href with your public document link -->
-    <a class="card" href="https://cad.onshape.com/documents/REPLACE_WITH_DOCUMENT_ID">
-      <h3>Onshape project</h3>
-      <p>Open the public document and click <em>Copy workspace</em> to clone and edit it.</p>
-      <span class="tag">Link to add</span>
+    <a class="card" href="https://cad.onshape.com/documents/93be8e5c77ee5029a13e80a4/w/61384a8d848d790aab7459e1/e/3ea34ab3df7cc8abd5dba7d2">
+      <h3>Frame front · Onshape</h3>
+      <p>The bezel that holds the panel. Open it and click <em>Copy workspace</em> to edit your own version.</p>
+      <span class="tag">Onshape</span>
     </a>
-    <!-- TODO: drop real STL files into site/assets/cad/ and keep these names (or update them) -->
-    <a class="card" href="assets/cad/case-front.stl" download>
-      <h3>case-front.stl</h3>
-      <p>Front bezel that holds the panel.</p>
-      <span class="tag">STL · to add</span>
+    <a class="card" href="https://cad.onshape.com/documents/c8201ed003930e04133f5158/w/fccd29ec1700acd05a8547f1/e/f5d66425b87cb5aaac91830c">
+      <h3>Frame back · Onshape</h3>
+      <p>The back shell with the Pi mount and the stand.</p>
+      <span class="tag">Onshape</span>
     </a>
-    <a class="card" href="assets/cad/case-back.stl" download>
-      <h3>case-back.stl</h3>
-      <p>Back shell with the Pi mount.</p>
-      <span class="tag">STL · to add</span>
+    <a class="card" href="assets/cad/frame-front.stl" download>
+      <h3>frame-front.stl</h3>
+      <p>Ready to slice. 580 KB.</p>
+      <span class="tag">STL</span>
     </a>
-    <a class="card" href="assets/cad/stand.stl" download>
-      <h3>stand.stl</h3>
-      <p>Desk stand.</p>
-      <span class="tag">STL · to add</span>
+    <a class="card" href="assets/cad/frame-back.stl" download>
+      <h3>frame-back.stl</h3>
+      <p>Ready to slice. 354 KB.</p>
+      <span class="tag">STL</span>
     </a>
-    <a class="card" href="https://github.com/zuologio/lan-dashboard">
+    <a class="card" href="https://github.com/zuologio/mac-dash">
       <h3>Source code</h3>
       <p>Rust workspace: agent, display and wire format. MIT licence.</p>
       <span class="tag">GitHub</span>
     </a>
-    <a class="card" href="https://github.com/zuologio/lan-dashboard/blob/main/ANALYSIS.md">
+    <a class="card" href="https://github.com/zuologio/mac-dash/blob/main/ANALYSIS.md">
       <h3>Design notes</h3>
       <p>Why UDP and beacons, and how the CPU cost fell from 22% to 0.012%.</p>
       <span class="tag">Docs</span>
@@ -157,7 +174,7 @@
   <p class="note">Printing settings: add layer height, material and supports here once you have them.</p>
 </section>
 
-<section id="run">
+<section id="run" class="reveal">
   <h2>Run it</h2>
   <p class="sub">Both machines on the same LAN.</p>
   <div class="cols">
@@ -174,7 +191,7 @@ cargo run --release -p macdash-tui     # anywhere on the LAN</code></pre>
 ./deploy/build-pi.sh        # --zero2 for a Zero 2 W
 ./deploy/install-pi.sh pi@192.168.0.148 --hdmi</code></pre>
       <p class="note">The dashboard starts at boot with no keyboard, and finds the Mac by itself.
-      All flags are in the <a href="https://github.com/zuologio/lan-dashboard#options">README</a>.</p>
+      All flags are in the <a href="https://github.com/zuologio/mac-dash#options">README</a>.</p>
     </div>
   </div>
 </section>
@@ -183,8 +200,88 @@ cargo run --release -p macdash-tui     # anywhere on the LAN</code></pre>
 
 <footer>
   <p>macdash · MIT licence · Pixel dashboard set in <a href="https://rsms.me/inter/">Inter</a> (SIL OFL).</p>
-  <p><a href="https://github.com/zuologio/lan-dashboard">GitHub</a> · <a href="https://github.com/zuologio/lan-dashboard/issues">Issues</a></p>
+  <p><a href="https://github.com/zuologio/mac-dash">GitHub</a> · <a href="https://github.com/zuologio/mac-dash/issues">Issues</a></p>
 </footer>
+
+<dialog id="lightbox"><img alt=""><form method="dialog"><button aria-label="Close">×</button></form></dialog>
+
+<script>
+(function () {
+  var els = document.querySelectorAll('.reveal');
+  if (!('IntersectionObserver' in window) || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    els.forEach(function (e) { e.classList.add('in'); }); return;
+  }
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.12 });
+  els.forEach(function (e) { io.observe(e); });
+  var lb = document.getElementById('lightbox');
+  document.querySelectorAll('.gallery img').forEach(function (img) {
+    img.addEventListener('click', function () { lb.querySelector('img').src = img.src; lb.querySelector('img').alt = img.alt; lb.showModal(); });
+  });
+  lb.addEventListener('click', function (e) { if (e.target === lb) lb.close(); });
+})();
+</script>
+
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+const box = document.getElementById('viewer');
+const hint = box.querySelector('.viewer-hint');
+async function start() {
+  const THREE = await import('three');
+  const { STLLoader } = await import('three/addons/loaders/STLLoader.js');
+  const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  box.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 5000);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x303038, 1.1));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(1, 1.4, 1.2); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x5293e1, 1.6); rim.position.set(-1.5, 0.4, -1); scene.add(rim);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableZoom = false; controls.enablePan = false; controls.enableDamping = true;
+  controls.autoRotate = !matchMedia('(prefers-reduced-motion: reduce)').matches; controls.autoRotateSpeed = 1.6;
+
+  const mat = new THREE.MeshStandardMaterial({ color: 0xb4b4bc, roughness: 0.45, metalness: 0.15 });
+  const loader = new STLLoader();
+  let mesh = null;
+  function load(url) {
+    hint.style.display = 'block'; hint.textContent = 'Loading 3D preview…';
+    loader.load(url, function (geo) {
+      if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
+      geo.computeVertexNormals(); geo.center();
+      mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      scene.add(mesh);
+      const size = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3());
+      const r = Math.max(size.x, size.y, size.z);
+      camera.position.set(r * 1.1, r * 0.75, r * 1.5);
+      camera.near = r / 100; camera.far = r * 20; camera.updateProjectionMatrix();
+      controls.target.set(0, 0, 0); controls.update();
+      hint.style.display = 'none';
+    }, undefined, function () { hint.textContent = 'Could not load the 3D preview. Use the download below.'; });
+  }
+  function resize() {
+    const w = box.clientWidth, h = box.clientHeight;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(box); resize();
+  (function tick() { requestAnimationFrame(tick); controls.update(); renderer.render(scene, camera); })();
+
+  document.querySelectorAll('.viewer-tabs .tab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.viewer-tabs .tab').forEach(function (t) { t.classList.remove('on'); });
+      b.classList.add('on'); load(b.dataset.stl);
+    });
+  });
+  load(document.querySelector('.viewer-tabs .tab.on').dataset.stl);
+}
+function boot() { start().catch(function () { hint.textContent = '3D preview unavailable in this browser. Use the downloads below.'; }); }
+if (document.readyState === 'complete') boot(); else addEventListener('load', boot);
+</script>
 
 </body>
 </html>
