@@ -35,7 +35,11 @@ code { font-size: .9em; background: var(--panel); border: 1px solid var(--line);
   padding: 12px 24px; background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(14px); border-bottom: 1px solid var(--line);
 }
-.brand { font-weight: 600; color: var(--text); font-size: 18px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
+.brand:hover { text-decoration: none; }
+.brand .word b { font-weight: 600; color: var(--accent); }
+.brand .mark { flex: none; transition: transform .6s cubic-bezier(.3,1.4,.5,1); }
+.brand:hover .mark { transform: rotate(120deg); }
 .nav nav { display: flex; gap: 20px; align-items: center; }
 .nav nav a { color: var(--muted); font-size: 15px; }
 .nav nav a:hover { color: var(--text); text-decoration: none; }
