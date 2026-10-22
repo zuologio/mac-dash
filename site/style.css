@@ -165,3 +165,5 @@ footer p { margin: 0 0 6px; }
 }
 code { white-space: nowrap; }
 pre code { white-space: pre; }
+.parts li { margin-bottom: 12px; }
+.parts em { color: var(--muted); }

@@ -115,25 +115,30 @@
 
 <section id="build" class="reveal">
   <h2>Build your own</h2>
+  <p class="sub">Everything used in the original build. The links are Amazon listings that may disappear, so each part is described well enough to search for an equivalent.</p>
   <div class="cols">
     <div>
       <h3>Parts</h3>
-      <ul class="list">
-        <li>Raspberry Pi Zero W (or Zero 2 W)</li>
-        <li>7-inch 1024×600 HDMI panel</li>
-        <li>microSD card and a 5 V power supply</li>
-        <li>mini-HDMI cable or adapter</li>
-        <li>3D-printed case (files below)</li>
-      </ul>
-      <p class="note">Edit this list to match your exact build. Put purchase links here too.</p>
+      <ol class="list parts">
+        <li><strong>Raspberry Pi Zero (W)</strong> running Raspberry Pi OS Lite, with no desktop environment. Any Pi or compatible board should work, but a bigger model may not fit inside the enclosure.</li>
+        <li><strong>7-inch HDMI display, 1024×600.</strong> <a href="https://amzn.eu/d/0iNG9w5t">Listing</a>. Search for: <em>7 inch 1024x600 HDMI IPS display</em>. See the note below about its connector placement.</li>
+        <li><strong>90° HDMI adapter</strong> for the display's HDMI input. <a href="https://amzn.eu/d/0hz6NODe">Listing</a>. Search for: <em>HDMI right angle adapter, 90 degree</em>. Needed because the port faces sideways and a straight plug sticks out too far.</li>
+        <li><strong>90° power adapter</strong> for the display's power input. <a href="https://amzn.eu/d/0dSlNw0N">Listing</a>. Search for: <em>right angle USB adapter</em>, matching your display's connector (micro-USB or USB-C). Same reason: the port is on the side.</li>
+        <li><strong>Mini-HDMI to HDMI adapter</strong> for the Pi Zero's video output. <a href="https://amzn.eu/d/0d7sm2GW">Listing</a>. Search for: <em>mini HDMI to HDMI adapter, short or angled</em>. Short and compact keeps it inside the case.</li>
+        <li><strong>USB power splitter cable (one input, two outputs)</strong> to power the Pi and the display from a single cable. <a href="https://amzn.eu/d/02D9BFRS">Listing</a>. Search for: <em>USB Y splitter power cable</em>, or <em>1 to 2 micro-USB power cable</em>.</li>
+        <li>microSD card for the Pi, and a 5 V USB power supply that can run both devices.</li>
+        <li>3D-printed enclosure (files below).</li>
+      </ol>
+      <p class="note"><strong>About the screen.</strong> This display is not ideal. Its HDMI and power inputs are on the side, so it needed two 90° adapters, and the case had to grow around them. With the connectors on the back, no adapters would be needed and, more importantly, the bezels around the screen could be much smaller. If you pick a panel for this build, look for one with the ports on the back.</p>
     </div>
     <div>
       <h3>Steps</h3>
       <ol class="list">
         <li>Print the case and stand.</li>
-        <li>Flash Raspberry Pi OS Lite and enable SSH.</li>
+        <li>Flash Raspberry Pi OS Lite (no desktop) and enable SSH.</li>
         <li>Install the agent on the Mac and the display on the Pi (see <a href="#run">Run it</a>).</li>
-        <li>Mount the Pi behind the panel and close the case.</li>
+        <li>Connect the Pi to the panel with the mini-HDMI and 90° adapters, and power both from the splitter cable.</li>
+        <li>Mount everything behind the panel and close the case.</li>
       </ol>
     </div>
   </div>
