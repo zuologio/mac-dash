@@ -45,7 +45,7 @@
 </section>
 
 <section class="real reveal">
-  <img src="assets/images/photo-hero.jpg" width="2000" height="1128" alt="The macdash panel on a desk, showing live CPU, memory and network">
+  <div class="real-img"><img src="assets/images/photo-hero.jpg" width="2000" height="1128" alt="The macdash panel on a desk, showing live CPU, memory and network"></div>
   <div class="real-text">
     <h2>On your desk,<br>not in a window.</h2>
     <p>A 7-inch panel in a printed case, always on, always current. Glance over, know your Mac.</p>
@@ -77,6 +77,16 @@
     <li><strong>37 kbps</strong><span>on the network</span></li>
     <li><strong>700 KB</strong><span>single static Pi binary</span></li>
   </ul>
+</section>
+
+<section id="sleep" class="reveal">
+  <h2>No buttons. Ever.</h2>
+  <p class="sub">The panel follows your Mac on its own.</p>
+  <div class="grid two">
+    <article><h3>Mac sleeps or shuts down</h3><p>The dashboard notices within seconds and turns the screen off, so the panel isn't glowing in a dark room.</p></article>
+    <article><h3>Mac wakes or starts up</h3><p>The first reading that arrives turns the screen back on. Nothing to press, nothing to restart.</p></article>
+  </div>
+  <p class="note">Only the screen sleeps with your Mac. The Pi itself keeps running, ready to wake the panel. This works when the Pi is installed with <code>--hdmi</code> (or <code>--backlight</code> for panels with a backlight device). It also follows the Mac's display sleeping, even when the Mac itself stays awake.</p>
 </section>
 
 <section id="how" class="reveal">
@@ -258,7 +268,7 @@ async function start() {
       scene.add(mesh);
       const size = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3());
       const r = Math.max(size.x, size.y, size.z);
-      camera.position.set(r * 1.1, r * 0.75, r * 1.5);
+      camera.position.set(r * 1.5, r * 1.05, r * 2.1);
       camera.near = r / 100; camera.far = r * 20; camera.updateProjectionMatrix();
       controls.target.set(0, 0, 0); controls.update();
       hint.style.display = 'none';
