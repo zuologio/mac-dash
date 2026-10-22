@@ -126,6 +126,7 @@
         <li><strong>90° power adapter</strong> for the display's power input. <a href="https://amzn.eu/d/0dSlNw0N">Listing</a>. Search for: <em>right angle USB adapter</em>, matching your display's connector (micro-USB or USB-C). Same reason: the port is on the side.</li>
         <li><strong>Mini-HDMI to HDMI adapter</strong> for the Pi Zero's video output. <a href="https://amzn.eu/d/0d7sm2GW">Listing</a>. Search for: <em>mini HDMI to HDMI adapter, short or angled</em>. Short and compact keeps it inside the case.</li>
         <li><strong>USB power splitter cable (one input, two outputs)</strong> to power the Pi and the display from a single cable. <a href="https://amzn.eu/d/02D9BFRS">Listing</a>. Search for: <em>USB Y splitter power cable</em>, or <em>1 to 2 micro-USB power cable</em>.</li>
+        <li><strong>4 M2.5 screws and 4 standoffs, 10 mm long</strong>, to mount the Pi inside the case. The standoffs are the little brass or yellowish spacers used on circuit boards, with a male thread on one end and a female thread (a hole) on the other. Search for: <em>M2.5 male-female standoff 10mm</em> (usually sold as a kit with screws).</li>
         <li>microSD card for the Pi, and a 5 V USB power supply that can run both devices.</li>
         <li>3D-printed enclosure (files below).</li>
       </ol>
@@ -276,7 +277,9 @@ async function start() {
       scene.add(mesh);
       const size = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3());
       const r = Math.max(size.x, size.y, size.z);
-      camera.position.set(r * 1.5, r * 1.05, r * 2.1);
+      const sphere = size.length() / 2;
+      const dist = (sphere / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 0.92;
+      camera.position.set(1.5, 1.05, 2.1).normalize().multiplyScalar(dist);
       camera.near = r / 100; camera.far = r * 20; camera.updateProjectionMatrix();
       controls.target.set(0, 0, 0); controls.update();
       hint.style.display = 'none';
