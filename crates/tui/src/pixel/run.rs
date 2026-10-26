@@ -161,6 +161,7 @@ pub fn run(
         let t = now();
         if last_pi.is_none_or(|last| t.saturating_sub(last) >= SAMPLE_MS) {
             dash.pi = pi.sample();
+            dash.pi.ip = crate::beacon::lan_address();
             last_pi = Some(t);
         }
         let wants = dash.presence.wants_backlight(t);

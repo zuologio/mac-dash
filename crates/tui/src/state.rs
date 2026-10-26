@@ -32,6 +32,8 @@ pub const EASE_MS: u64 = 400;
 pub struct PiStats {
     pub temp_c: Option<f32>,
     pub cpu_pct: Option<f32>,
+    /// The Pi's LAN address; `None` when it has none (not connected).
+    pub ip: Option<std::net::Ipv4Addr>,
 }
 
 pub struct Dashboard {

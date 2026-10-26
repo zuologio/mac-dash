@@ -618,7 +618,8 @@ fn menu_model(dash: &Dashboard, presence: Presence) -> Model {
     Model::Menu { host, label, tint, pi: menu_pi(&dash.pi) }
 }
 
-/// "Pi", then each reading the Pi could take, coloured like the Mac's.
+/// "Pi", then each reading the Pi could take, coloured like the Mac's, then
+/// its LAN address, or a red "No network" when it has none.
 fn menu_pi(pi: &PiStats) -> Vec<(String, Rgb)> {
     let readings: Vec<(String, Rgb)> = [
         pi.temp_c.map(|c| (format!("{c:.0}°"), temp_severity(c, LABEL))),
@@ -627,10 +628,11 @@ fn menu_pi(pi: &PiStats) -> Vec<(String, Rgb)> {
     .into_iter()
     .flatten()
     .collect();
-    if readings.is_empty() {
-        return readings;
-    }
-    std::iter::once(("Pi".to_string(), SECONDARY)).chain(readings).collect()
+    let network = match pi.ip {
+        Some(ip) => (ip.to_string(), LABEL),
+        None => ("No network".to_string(), CRITICAL),
+    };
+    std::iter::once(("Pi".to_string(), SECONDARY)).chain(readings).chain(std::iter::once(network)).collect()
 }
 
 fn memory_model(p: &StatsPacket) -> Model {
@@ -1201,10 +1203,10 @@ mod tests {
         let mut s = Scene::new(1024, 600);
         let mut d = dash(packet(10, 10));
         // Packets have stopped arriving, so only the Pi's reading changes.
-        d.pi = PiStats { temp_c: Some(48.0), cpu_pct: Some(12.0) };
+        d.pi = PiStats { temp_c: Some(48.0), cpu_pct: Some(12.0), ip: None };
         s.render(&d, 11_900);
         let before = snap(s.render(&d, 11_950));
-        d.pi = PiStats { temp_c: Some(61.0), cpu_pct: Some(37.0) };
+        d.pi = PiStats { temp_c: Some(61.0), cpu_pct: Some(37.0), ip: None };
         let f = s.render(&d, 12_000);
         let dirty = f.dirty.clone();
         let after = snap(f);
@@ -1221,7 +1223,7 @@ mod tests {
         let mut s = Scene::new(1024, 600);
         let mut d = dash(packet(10, 10));
         let without = snap(s.render(&d, 11_900));
-        d.pi = PiStats { temp_c: Some(48.0), cpu_pct: Some(12.0) };
+        d.pi = PiStats { temp_c: Some(48.0), cpu_pct: Some(12.0), ip: None };
         let with = snap(s.render(&d, 11_950));
         let changed: Vec<usize> = (0..1024)
             .filter(|&x| (0..MENU_H as usize).any(|y| without.get(x, y) != with.get(x, y)))
@@ -1230,6 +1232,15 @@ mod tests {
         // The pill is centred and at least 80 px wide; the clock is at the
         // right edge from about x = 890.
         assert!(changed.iter().all(|&x| x > 512 + 40 && x < 850), "{:?}..{:?}", changed.first(), changed.last());
+    }
+
+    #[test]
+    fn the_menu_shows_the_pi_address_or_that_it_has_none() {
+        let on = menu_pi(&PiStats { temp_c: Some(48.0), cpu_pct: None, ip: Some([192, 168, 0, 148].into()) });
+        assert_eq!(on.last().unwrap().0, "192.168.0.148");
+        let off = menu_pi(&PiStats::default());
+        assert_eq!(off.last(), Some(&("No network".to_string(), CRITICAL)));
+        assert_eq!(off.first().unwrap().0, "Pi");
     }
 
     #[test]

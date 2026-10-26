@@ -205,6 +205,13 @@ fn open_socket() -> Option<UdpSocket> {
 /// Re-read on every beacon rather than cached: a Pi's WiFi may associate
 /// seconds after this thread starts, and an interface list captured at boot
 /// would miss it permanently.
+/// The address the Pi has on the LAN, for the status bar. A 169.254.x.x
+/// address is what the Pi gives itself when no router answered, so it
+/// counts as not connected.
+pub fn lan_address() -> Option<Ipv4Addr> {
+    multicast_interfaces().into_iter().find(|a| !a.is_link_local())
+}
+
 fn multicast_interfaces() -> Vec<Ipv4Addr> {
     let mut out = Vec::new();
     unsafe {

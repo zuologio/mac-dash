@@ -53,7 +53,7 @@ fn main() {
     }
 
     // The Mac has no Pi sensor files, so a preview shows sample readings.
-    dash.pi = state::PiStats { temp_c: Some(48.0), cpu_pct: Some(12.0) };
+    dash.pi = state::PiStats { temp_c: Some(48.0), cpu_pct: Some(12.0), ip: Some([192, 168, 0, 148].into()) };
     let mut scene = pixel::scene::Scene::new(w, h);
     let t = Instant::now();
     let frame = scene.render(&dash, now_ms()).canvas;

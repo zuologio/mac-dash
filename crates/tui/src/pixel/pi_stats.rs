@@ -45,7 +45,7 @@ impl PiSampler {
         if now.is_some() {
             self.prev = now;
         }
-        PiStats { temp_c, cpu_pct }
+        PiStats { temp_c, cpu_pct, ip: None }
     }
 }
 
@@ -119,15 +119,15 @@ mod tests {
         fs::write(root.join(TEMP_FILE), "51000\n").unwrap();
         fs::write(root.join(STAT_FILE), STAT).unwrap();
         let mut s = PiSampler::with_root(&root);
-        assert_eq!(s.sample(), PiStats { temp_c: Some(51.0), cpu_pct: None });
+        assert_eq!(s.sample(), PiStats { temp_c: Some(51.0), cpu_pct: None, ip: None });
         fs::write(root.join(STAT_FILE), "cpu  300 0 100 1000 100 0 0 0 0 0\n").unwrap();
-        assert_eq!(s.sample(), PiStats { temp_c: Some(51.0), cpu_pct: Some(50.0) });
+        assert_eq!(s.sample(), PiStats { temp_c: Some(51.0), cpu_pct: Some(50.0), ip: None });
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn missing_files_read_as_nothing() {
         let mut s = PiSampler::with_root("/nonexistent");
-        assert_eq!(s.sample(), PiStats { temp_c: None, cpu_pct: None });
+        assert_eq!(s.sample(), PiStats { temp_c: None, cpu_pct: None, ip: None });
     }
 }
