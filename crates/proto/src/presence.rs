@@ -9,7 +9,12 @@
 //! threshold, which is why backlight control needed no protocol change.
 
 /// Below this, the stream is healthy.
-pub const LIVE_MS: u64 = 1_000;
+///
+/// The agent sends every 200 ms, but WiFi routinely stalls for a second or so
+/// (power-save, AP housekeeping, a background scan on the Mac). At 1 s that
+/// dimmed the panel for a split second every so often; 3 s rides those out
+/// while a real outage still shows as stale well before `ASLEEP_MS`.
+pub const LIVE_MS: u64 = 3_000;
 
 /// Beyond this, the Mac is treated as asleep and the panel is darkened.
 ///
@@ -154,8 +159,8 @@ mod tests {
         let mut t = PresenceTracker::new();
         t.on_packet(10_000, Some(false));
         assert_eq!(t.presence(10_000), Presence::Live);
-        assert_eq!(t.presence(10_999), Presence::Live);
-        assert_eq!(t.presence(11_000), Presence::Stale);
+        assert_eq!(t.presence(12_999), Presence::Live);
+        assert_eq!(t.presence(13_000), Presence::Stale);
         assert_eq!(t.presence(19_999), Presence::Stale);
         assert_eq!(t.presence(20_000), Presence::Asleep);
     }
@@ -195,9 +200,9 @@ mod tests {
         t.on_packet(0, Some(false));
         assert_eq!(t.poll_transition(100), Some(Presence::Live));
         assert_eq!(t.poll_transition(200), None);
-        assert_eq!(t.poll_transition(900), None);
-        assert_eq!(t.poll_transition(2_000), Some(Presence::Stale));
-        assert_eq!(t.poll_transition(3_000), None);
+        assert_eq!(t.poll_transition(2_900), None);
+        assert_eq!(t.poll_transition(3_000), Some(Presence::Stale));
+        assert_eq!(t.poll_transition(4_000), None);
         assert_eq!(t.poll_transition(30_000), Some(Presence::Asleep));
         assert_eq!(t.poll_transition(40_000), None);
         t.on_packet(40_100, Some(false));
